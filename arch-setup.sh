@@ -1,33 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-#  arch-setup.sh  —  Atualizado para 2025
-#  Uso: git clone <seu-repo> && cd <repo> && ./arch-setup.sh
-#
-#  Fluxo esperado:
-#    1. Arch Linux minimal instalado
-#    2. git clone do repositório
-#    3. ./arch-setup.sh  (rodado de dentro da pasta do repo)
-#
-#  O repositório deve conter:
-#    arch-setup.sh   ← este script
-#    wallpaper.jpg   ← (ou .png / .jpeg) wallpaper que será copiado
-#
-#  Tema: Catppuccin Mocha | Clima em °C | Teclado BR | Sem binds ROG
-#
-#  Mudanças vs versão anterior:
-#    - swaylock-effects  → hyprlock   (nativo Hyprland, mais estável)
-#    - swaybg            → hyprpaper  (nativo Hyprland, config própria)
-#    - polkit-gnome      → hyprpolkitagent (nativo Hyprland)
-#    - Adicionado hypridle (idle/suspend manager nativo)
-#    - dracula-icons-git → dracula-icons-theme (versão estável)
-#    - Removido script manual xdg-portal (systemd cuida disso)
-#    - hyprland.conf com sintaxe moderna (sem deprecated keys)
+#  fix-nvidia.sh — Correção de driver para NVIDIA + Hyprland
+#  Uso: ./fix-nvidia.sh
+#  Compatível com: GTX 700+ / RTX série toda / MX series
+#  Para GPUs antigas (GTX 600 e anteriores) veja nota no script.
 # ==============================================================================
 
 set -e
 
-# ── Cores e helpers ────────────────────────────────────────────────────────────
 BOLD="\e[1m"
 GREEN="\e[32m"
 YELLOW="\e[33m"
@@ -41,12 +22,6 @@ warn() { echo -e "${YELLOW}${BOLD}  ⚠  $1${RESET}"; }
 info() { echo -e "     $1"; }
 err()  { echo -e "${RED}${BOLD}  ✘  $1${RESET}"; }
 
-confirm() {
-    read -n1 -rp "$(echo -e "${BOLD}  ➜  $1 (s/n): ${RESET}")" ans
-    echo
-    [[ "$ans" =~ ^[sSyY]$ ]]
-}
-
 header() {
     echo -e "\n${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════╗"
@@ -55,1003 +30,220 @@ header() {
     echo -e "${RESET}"
 }
 
-# ── Diretório raiz do repositório ─────────────────────────────────────────────
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+confirm() {
+    read -n1 -rp "$(echo -e "${BOLD}  ➜  $1 (s/n): ${RESET}")" ans
+    echo
+    [[ "$ans" =~ ^[sSyY]$ ]]
+}
 
 # ==============================================================================
-# FASE 0 — VERIFICAÇÕES INICIAIS
+header "FIX — Driver NVIDIA + Hyprland"
 # ==============================================================================
-header "FASE 0 — Verificações Iniciais"
 
 if [[ "$EUID" -eq 0 ]]; then
-    err "Não execute este script como root. Use um usuário normal com sudo."
+    err "Não execute como root. Use usuário normal com sudo."
     exit 1
 fi
 
-if ! sudo -v &>/dev/null; then
-    err "Este usuário não tem privilégios sudo."
-    exit 1
-fi
-ok "Privilégios sudo confirmados"
+# ── Detectar GPU NVIDIA ───────────────────────────────────────────────────────
+msg "Detectando hardware NVIDIA"
+GPU_INFO=$(lspci | grep -i "vga\|display\|3d" || true)
+echo -e "  $GPU_INFO"
 
-if [[ ! -f "$REPO_DIR/arch-setup.sh" ]]; then
-    err "Execute o script de dentro do repositório clonado."
-    exit 1
+if echo "$GPU_INFO" | grep -qi "nvidia"; then
+    ok "GPU NVIDIA detectada"
+else
+    warn "GPU NVIDIA não detectada. Verifique se este é o script correto."
+    info "Saída de lspci: $GPU_INFO"
 fi
-ok "Repositório detectado em: $REPO_DIR"
 
-# Detecta wallpaper no repositório (aceita .jpg, .jpeg ou .png)
-WALLPAPER_SRC=""
-for ext in jpg jpeg png; do
-    if [[ -f "$REPO_DIR/wallpaper.$ext" ]]; then
-        WALLPAPER_SRC="$REPO_DIR/wallpaper.$ext"
-        WALLPAPER_EXT="$ext"
-        break
+# ── Detectar notebook com Intel+NVIDIA (Optimus/PRIME) ───────────────────────
+IS_OPTIMUS=false
+if echo "$GPU_INFO" | grep -qi "intel" && echo "$GPU_INFO" | grep -qi "nvidia"; then
+    IS_OPTIMUS=true
+    warn "Configuração Optimus/PRIME detectada (Intel + NVIDIA)"
+    info "Serão instalados pacotes extras para PRIME render offload."
+fi
+
+# ── Remover driver nouveau ────────────────────────────────────────────────────
+msg "Desativando driver nouveau (open-source)"
+if lsmod | grep -q nouveau; then
+    sudo modprobe -r nouveau 2>/dev/null || true
+    warn "nouveau estava carregado — foi descarregado"
+fi
+
+# Bloqueia o nouveau via modprobe
+sudo tee /etc/modprobe.d/blacklist-nouveau.conf > /dev/null << 'EOF'
+blacklist nouveau
+options nouveau modeset=0
+EOF
+ok "nouveau bloqueado via /etc/modprobe.d/blacklist-nouveau.conf"
+
+# ── Instalar driver proprietário NVIDIA ───────────────────────────────────────
+msg "Instalando driver proprietário NVIDIA"
+info "Nota: nvidia-dkms compila para todos os kernels instalados."
+info "Se tiver kernel personalizado, isso pode demorar alguns minutos."
+
+sudo pacman -S --needed --noconfirm \
+    nvidia-dkms \
+    nvidia-utils \
+    lib32-nvidia-utils \
+    nvidia-settings \
+    libva-nvidia-driver \
+    libva-utils
+
+if $IS_OPTIMUS; then
+    sudo pacman -S --needed --noconfirm \
+        nvidia-prime \
+        switcheroo-control
+    sudo systemctl enable switcheroo-control
+    info "nvidia-prime instalado para PRIME render offload"
+fi
+ok "Driver NVIDIA instalado"
+
+# ── mkinitcpio — módulos NVIDIA ───────────────────────────────────────────────
+msg "Adicionando módulos NVIDIA ao initramfs"
+MKINIT="/etc/mkinitcpio.conf"
+
+# Verifica e atualiza MODULES
+if grep -q "nvidia_drm" "$MKINIT"; then
+    warn "Módulos NVIDIA já presentes no mkinitcpio.conf"
+else
+    # Substitui MODULES=() ou MODULES=(outros) adicionando os módulos NVIDIA
+    sudo sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' "$MKINIT"
+    sudo sed -i 's/MODULES=( /MODULES=(/' "$MKINIT"
+    ok "Módulos NVIDIA adicionados ao mkinitcpio.conf"
+fi
+
+# Remove kms do HOOKS para evitar conflito com nvidia_drm
+if grep -q " kms" "$MKINIT"; then
+    sudo sed -i 's/ kms//' "$MKINIT"
+    ok "Hook 'kms' removido do mkinitcpio.conf (evita conflito com nvidia_drm)"
+fi
+
+sudo mkinitcpio -P
+ok "initramfs reconstruído"
+
+# ── Detectar e configurar bootloader ─────────────────────────────────────────
+msg "Detectando bootloader e adicionando parâmetros NVIDIA"
+
+KERNEL_PARAMS="nvidia_drm.modeset=1 nvidia_drm.fbdev=1"
+
+# systemd-boot
+if [[ -d /boot/loader/entries ]]; then
+    info "systemd-boot detectado"
+    ENTRIES=$(ls /boot/loader/entries/*.conf 2>/dev/null || true)
+    if [[ -z "$ENTRIES" ]]; then
+        err "Nenhuma entrada encontrada em /boot/loader/entries/"
+        info "Adicione manualmente à linha 'options': $KERNEL_PARAMS"
+    else
+        for ENTRY in $ENTRIES; do
+            if grep -q "nvidia_drm.modeset" "$ENTRY"; then
+                warn "Parâmetros NVIDIA já presentes em $ENTRY"
+            else
+                sudo sed -i "s/^options \(.*\)/options \1 $KERNEL_PARAMS/" "$ENTRY"
+                ok "Parâmetros adicionados em: $ENTRY"
+            fi
+        done
     fi
-done
 
-if [[ -n "$WALLPAPER_SRC" ]]; then
-    ok "Wallpaper encontrado: wallpaper.$WALLPAPER_EXT"
+# GRUB
+elif [[ -f /etc/default/grub ]]; then
+    info "GRUB detectado"
+    if grep -q "nvidia_drm.modeset" /etc/default/grub; then
+        warn "Parâmetros NVIDIA já presentes no GRUB"
+    else
+        sudo sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\1 $KERNEL_PARAMS\"/" \
+            /etc/default/grub
+        sudo grub-mkconfig -o /boot/grub/grub.cfg
+        ok "Parâmetros NVIDIA adicionados ao GRUB"
+    fi
+
 else
-    warn "Nenhum wallpaper encontrado no repositório."
-    info "Coloque wallpaper.jpg (ou .jpeg/.png) na raiz do repositório."
-    info "O fundo ficará preto até você adicionar um wallpaper manualmente."
+    warn "Bootloader não identificado automaticamente."
+    info "Adicione manualmente os parâmetros: $KERNEL_PARAMS"
 fi
 
-# ==============================================================================
-# FASE 1 — PÓS-INSTALAÇÃO DO ARCH
-# ==============================================================================
-header "FASE 1 — Pós-instalação do Arch Linux"
+# ── Variáveis de ambiente no hyprland.conf ────────────────────────────────────
+msg "Configurando variáveis de ambiente NVIDIA no hyprland.conf"
+HYPR_CONF="$HOME/.config/hypr/hyprland.conf"
 
-# ── pacman.conf ───────────────────────────────────────────────────────────────
-msg "Otimizando pacman.conf"
-PACMAN_CONF="/etc/pacman.conf"
-[[ ! -f "$PACMAN_CONF" ]] && { err "$PACMAN_CONF não encontrado."; exit 1; }
+if [[ ! -f "$HYPR_CONF" ]]; then
+    err "hyprland.conf não encontrado em $HYPR_CONF"
+    exit 1
+fi
 
-sudo sed -i 's/^#Color/Color/'                                       "$PACMAN_CONF"
-sudo sed -i 's/^#ParallelDownloads = [0-9]*/ParallelDownloads = 15/' "$PACMAN_CONF"
-sudo sed -i 's/^ParallelDownloads = [0-9]*/ParallelDownloads = 15/'  "$PACMAN_CONF"
-grep -q "^ILoveCandy" "$PACMAN_CONF" || \
-    sudo sed -i '/^ParallelDownloads = 15/a ILoveCandy'              "$PACMAN_CONF"
-ok "pacman.conf: Color + ParallelDownloads = 15 + ILoveCandy"
-
-# ── makepkg ───────────────────────────────────────────────────────────────────
-msg "Configurando makepkg"
-MAKEPKG_BIN="/usr/bin/makepkg"
-[[ ! -f "$MAKEPKG_BIN" ]] && { err "$MAKEPKG_BIN não encontrado."; exit 1; }
-
-sudo sed -i '/EUID/ { N; N; N; s/error/warning/; s/exit $E_ROOT/#exit $E_ROOT/; }' "$MAKEPKG_BIN"
-ok "makepkg configurado"
-
-# ── Atualizar sistema ─────────────────────────────────────────────────────────
-msg "Atualizando sistema"
-sudo pacman -Syu --noconfirm
-ok "Sistema atualizado"
-
-# ── git + base-devel ──────────────────────────────────────────────────────────
-msg "Instalando git e ferramentas de build"
-sudo pacman -S --needed --noconfirm git base-devel devtools
-ok "git + base-devel instalados"
-
-# ── Yay ───────────────────────────────────────────────────────────────────────
-msg "Instalando Yay (AUR helper)"
-if command -v yay &>/dev/null; then
-    warn "yay já instalado, pulando."
+if grep -q "LIBVA_DRIVER_NAME,nvidia" "$HYPR_CONF"; then
+    warn "Variáveis NVIDIA já configuradas no hyprland.conf, pulando."
 else
-    cd /tmp
-    rm -rf yay
-    git clone https://aur.archlinux.org/yay.git
-    cd yay
-    makepkg -si --noconfirm
-    yay -Y --gendb
-    cd "$REPO_DIR"
-    ok "yay instalado"
+    cat >> "$HYPR_CONF" << 'EOF'
+
+# ── NVIDIA ────────────────────────────────────────────────────────────────────
+env = LIBVA_DRIVER_NAME,nvidia
+env = __GLX_VENDOR_LIBRARY_NAME,nvidia
+env = NVD_BACKEND,direct
+env = GBM_BACKEND,nvidia-drm
+env = __NV_PRIME_RENDER_OFFLOAD,1
+cursor {
+    no_hardware_cursors = true
+}
+EOF
+    ok "Variáveis NVIDIA adicionadas ao hyprland.conf"
 fi
 
-# ── Pacotes via pacman ────────────────────────────────────────────────────────
-msg "Instalando pacotes via pacman"
-sudo pacman -S --needed --noconfirm \
-    gufw \
-    ffmpeg \
-    gst-plugins-ugly gst-plugins-good gst-plugins-base \
-    gst-plugins-bad gst-libav gstreamer \
-    fwupd \
-    ntfs-3g \
-    gnome-disk-utility \
-    rhythmbox \
-    vlc \
-    remmina \
-    timeshift \
-    steam \
-    gimp \
-    shotwell \
-    audacity \
-    easytag \
-    flatpak \
-    pipewire pipewire-pulse pipewire-audio wireplumber \
-    qt5-wayland qt6-wayland
-ok "Pacotes pacman instalados"
-
-# ── Flatpak + Flathub ─────────────────────────────────────────────────────────
-msg "Configurando Flatpak + Flathub"
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-
-info "Instalando aplicativos Flatpak..."
-flatpak install --noninteractive flathub \
-    com.sublimetext.three \
-    com.visualstudio.code \
-    com.bitwarden.desktop \
-    org.mozilla.Thunderbird \
-    com.discordapp.Discord \
-    org.telegram.desktop \
-    org.onlyoffice.desktopeditors \
-    net.agalwood.Motrix \
-    com.spotify.Client \
-    io.appflowy.AppFlowy
-ok "Aplicativos Flatpak instalados"
-
-# ── Pacotes AUR ───────────────────────────────────────────────────────────────
-msg "Instalando pacotes AUR via yay"
-yay -S --needed --noconfirm \
-    google-chrome \
-    heroic-games-launcher-bin
-ok "Pacotes AUR instalados"
-
-# ── Bluetooth ─────────────────────────────────────────────────────────────────
-msg "Ativando Bluetooth"
-sudo systemctl enable --now bluetooth.service
-ok "Bluetooth ativado"
-
-# ── PipeWire ──────────────────────────────────────────────────────────────────
-msg "Ativando PipeWire"
-systemctl --user enable --now pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
-ok "PipeWire ativado"
-
-# ── Wi-Fi Powersave ───────────────────────────────────────────────────────────
-if confirm "Desabilitar Wi-Fi powersave (recomendado para estabilidade)?"; then
-    WIFI_CONF="/etc/NetworkManager/conf.d/wifi-powersave.conf"
-    printf "[connection]\nwifi.powersave = 2\n" | sudo tee "$WIFI_CONF" > /dev/null
-    sudo systemctl restart NetworkManager
-    sleep 2
-    ok "Wi-Fi powersave desabilitado"
+# ── PRIME — atalho para forçar NVIDIA em apps específicos (Optimus) ───────────
+if $IS_OPTIMUS; then
+    msg "Configurando PRIME render offload (Optimus)"
+    if ! grep -q "alias nvidia-run" ~/.bashrc; then
+        echo -e '\n# Roda aplicativo forçando GPU NVIDIA (Optimus)\nalias nvidia-run="prime-run"' >> ~/.bashrc
+    fi
+    info "Use 'nvidia-run <programa>' para forçar a GPU dedicada."
+    info "Ex: nvidia-run steam, nvidia-run blender"
+    ok "Alias nvidia-run configurado no .bashrc"
 fi
 
-# ==============================================================================
-# FASE 2 — HYPRLAND + CONFIGURAÇÕES
-# ==============================================================================
-header "FASE 2 — Instalação e Configuração do Hyprland"
+# ── SDDM + Wayland ────────────────────────────────────────────────────────────
+msg "Configurando SDDM para Wayland com NVIDIA"
+sudo mkdir -p /etc/sddm.conf.d/
+sudo tee /etc/sddm.conf.d/hyprland.conf > /dev/null << 'EOF'
+[General]
+DisplayServer=wayland
+GreeterEnvironment=QT_WAYLAND_SHELL_INTEGRATION=layer-shell
 
-# ── Pacotes do Hyprland ───────────────────────────────────────────────────────
-msg "Instalando pacotes do Hyprland"
-
-# Pacotes do repositório oficial
-sudo pacman -S --needed --noconfirm \
-    hyprland \
-    hyprlock \
-    hypridle \
-    hyprpaper \
-    hyprpolkitagent \
-    xdg-desktop-portal-hyprland \
-    xdg-desktop-portal-gtk \
-    kitty \
-    waybar \
-    wofi \
-    mako \
-    thunar \
-    gvfs \
-    grim \
-    slurp \
-    swappy \
-    pamixer \
-    brightnessctl \
-    ttf-jetbrains-mono-nerd \
-    noto-fonts-emoji \
-    python-requests \
-    starship \
-    bluez \
-    bluez-utils \
-    lxappearance \
-    xfce4-settings \
-    wl-clipboard \
-    xorg-xwayland
-
-# Pacotes do AUR
-msg "Instalando pacotes AUR do Hyprland"
-yay -S --needed --noconfirm \
-    wlogout \
-    dracula-gtk-theme \
-    dracula-icons-theme
-
-# Remove portais XDG conflitantes (GNOME sobrescreve o Hyprland)
-msg "Removendo portais XDG conflitantes"
-sudo pacman -R --noconfirm xdg-desktop-portal-gnome 2>/dev/null || true
-
-ok "Pacotes do Hyprland instalados"
-
-# ── Diretórios ────────────────────────────────────────────────────────────────
-msg "Criando diretórios de configuração"
-mkdir -p ~/.config/hypr
-mkdir -p ~/.config/kitty
-mkdir -p ~/.config/waybar/scripts
-mkdir -p ~/.config/mako
-mkdir -p ~/.config/hyprlock
-mkdir -p ~/.config/wofi
-mkdir -p ~/.config/gtk-3.0
-ok "Diretórios criados"
-
-# ── Wallpaper ─────────────────────────────────────────────────────────────────
-msg "Copiando wallpaper"
-WALLPAPER_DEST_PATH="$HOME/.config/hypr/wallpaper"
-if [[ -n "$WALLPAPER_SRC" ]]; then
-    cp "$WALLPAPER_SRC" "${WALLPAPER_DEST_PATH}.${WALLPAPER_EXT}"
-    WALLPAPER_FULL="${WALLPAPER_DEST_PATH}.${WALLPAPER_EXT}"
-    ok "Wallpaper copiado para ${WALLPAPER_FULL}"
-else
-    WALLPAPER_FULL="${WALLPAPER_DEST_PATH}.jpg"
-    warn "Sem wallpaper — edite ~/.config/hypr/hyprpaper.conf depois."
-fi
-
-# ── hyprpaper.conf ────────────────────────────────────────────────────────────
-msg "Escrevendo hyprpaper.conf"
-cat > ~/.config/hypr/hyprpaper.conf << EOF
-preload = $WALLPAPER_FULL
-wallpaper = ,$WALLPAPER_FULL
-splash = false
+[Wayland]
+CompositorCommand=Hyprland
 EOF
-ok "hyprpaper.conf escrito"
+ok "SDDM configurado para Wayland"
 
-# ── hypridle.conf ─────────────────────────────────────────────────────────────
-msg "Escrevendo hypridle.conf"
-cat > ~/.config/hypr/hypridle.conf << 'EOF'
-general {
-    lock_cmd         = pidof hyprlock || hyprlock
-    before_sleep_cmd = loginctl lock-session
-    after_sleep_cmd  = hyprctl dispatch dpms on
-}
-
-listener {
-    timeout  = 300
-    on-timeout = brightnessctl -s set 10
-    on-resume  = brightnessctl -r
-}
-
-listener {
-    timeout  = 330
-    on-timeout = loginctl lock-session
-}
-
-listener {
-    timeout  = 600
-    on-timeout = hyprctl dispatch dpms off
-    on-resume  = hyprctl dispatch dpms on
-}
-
-listener {
-    timeout  = 900
-    on-timeout = systemctl suspend
-}
+# ── Layout teclado BR no SDDM ─────────────────────────────────────────────────
+msg "Configurando layout de teclado BR no SDDM"
+sudo tee /etc/sddm.conf.d/keyboard.conf > /dev/null << 'EOF'
+[X11]
+XkbLayout=br
 EOF
-ok "hypridle.conf escrito"
+ok "Layout BR configurado no SDDM"
 
-# ── hyprlock.conf ─────────────────────────────────────────────────────────────
-msg "Escrevendo hyprlock.conf (Catppuccin Mocha)"
-cat > ~/.config/hypr/hyprlock.conf << 'EOF'
-general {
-    disable_loading_bar = false
-    hide_cursor         = true
-    grace               = 2
-    no_fade_in          = false
-}
-
-background {
-    monitor =
-    path    = screenshot
-    blur_passes = 3
-    blur_size   = 7
-    noise       = 0.0117
-    contrast    = 0.8916
-    brightness  = 0.8172
-    vibrancy    = 0.1696
-    vibrancy_darkness = 0.0
-}
-
-input-field {
-    monitor =
-    size = 250, 50
-    outline_thickness = 3
-    dots_size    = 0.33
-    dots_spacing = 0.15
-    dots_center  = false
-    outer_color  = rgb(cba6f7)
-    inner_color  = rgb(1e1e2e)
-    font_color   = rgb(cdd6f4)
-    fade_on_empty = true
-    placeholder_text = <i>Senha...</i>
-    hide_input   = false
-    position     = 0, -80
-    halign       = center
-    valign       = center
-}
-
-label {
-    monitor =
-    text     = cmd[update:1000] echo "$(date +"%H:%M")"
-    color    = rgba(cdd6f4ff)
-    font_size = 72
-    font_family = JetBrainsMono Nerd Font Bold
-    position = 0, 80
-    halign   = center
-    valign   = center
-}
-
-label {
-    monitor =
-    text     = cmd[update:1000] echo "$(date +'%a, %d de %B')"
-    color    = rgba(a6adc8ff)
-    font_size = 18
-    font_family = JetBrainsMono Nerd Font
-    position = 0, 0
-    halign   = center
-    valign   = center
-}
-EOF
-ok "hyprlock.conf escrito"
-
-# ── hyprland.conf ─────────────────────────────────────────────────────────────
-msg "Escrevendo hyprland.conf"
-cat > ~/.config/hypr/hyprland.conf << 'EOF'
-# ─── Monitores ────────────────────────────────────────────────────────────────
-# Modo automático — descomente e edite para dual monitor:
-# monitor=DP-1,2560x1440@165,0x0,1
-monitor=,preferred,auto,auto
-
-# ─── Autostart ────────────────────────────────────────────────────────────────
-exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
-exec-once = systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
-exec-once = hyprpolkitagent
-exec-once = waybar
-exec-once = mako
-exec-once = hypridle
-exec-once = hyprpaper
-
-# ─── Ambiente ─────────────────────────────────────────────────────────────────
-env = XCURSOR_SIZE,24
-env = HYPRCURSOR_SIZE,24
-env = QT_QPA_PLATFORM,wayland
-env = QT_WAYLAND_DISABLE_WINDOWDECORATION,1
-
-# ─── Input ────────────────────────────────────────────────────────────────────
-input {
-    kb_layout    = br
-    kb_variant   =
-    kb_model     =
-    kb_options   =
-    kb_rules     =
-    follow_mouse = 1
-    sensitivity  = 0
-
-    touchpad {
-        natural_scroll = yes
-    }
-}
-
-# ─── Aparência geral ──────────────────────────────────────────────────────────
-general {
-    gaps_in             = 5
-    gaps_out            = 20
-    border_size         = 2
-    col.active_border   = rgb(cba6f7) rgb(89b4fa) 45deg
-    col.inactive_border = rgba(595959aa)
-    layout              = dwindle
-    resize_on_border    = true
-}
-
-misc {
-    disable_hyprland_logo   = yes
-    disable_splash_rendering = yes
-    mouse_move_enables_dpms = true
-    key_press_enables_dpms  = true
-}
-
-# ─── Decoração ────────────────────────────────────────────────────────────────
-decoration {
-    rounding = 10
-
-    blur {
-        enabled    = true
-        size       = 7
-        passes     = 3
-        new_optimizations = true
-    }
-
-    shadow {
-        enabled        = true
-        range          = 4
-        render_power   = 3
-        color          = rgba(1a1a1aee)
-    }
-}
-
-# ─── Animações ────────────────────────────────────────────────────────────────
-animations {
-    enabled = yes
-    bezier  = myBezier, 0.05, 0.9, 0.1, 1.05
-
-    animation = windows,    1, 7, myBezier
-    animation = windowsOut, 1, 7, default, popin 80%
-    animation = border,     1, 10, default
-    animation = fade,       1, 7, default
-    animation = workspaces, 1, 6, default
-}
-
-# ─── Layouts ──────────────────────────────────────────────────────────────────
-dwindle {
-    pseudotile     = yes
-    preserve_split = yes
-}
-
-master {
-    new_status = master
-}
-
-gestures {
-    workspace_swipe = on
-}
-
-# ─── Regras de janela ─────────────────────────────────────────────────────────
-windowrulev2 = opacity 0.85 0.85, class:^(kitty)$
-windowrulev2 = opacity 0.85 0.85, class:^(thunar)$
-windowrulev2 = float, class:^(pavucontrol)$
-windowrulev2 = float, class:^(blueman-manager)$
-windowrulev2 = float, title:^(Gerenciador de arquivos)$
-
-# Corrige tearing em jogos/aplicações fullscreen
-windowrulev2 = immediate, class:^(steam_app_)(.*)$
-
-# ─── Atalhos ──────────────────────────────────────────────────────────────────
-$mainMod = SUPER
-
-# Aplicações
-bind = $mainMod,       Q,     exec,           kitty
-bind = $mainMod SHIFT, X,     killactive,
-bind = $mainMod,       L,     exec,           hyprlock
-bind = $mainMod,       M,     exec,           wlogout --protocol layer-shell
-bind = $mainMod SHIFT, M,     exit,
-bind = $mainMod,       E,     exec,           thunar
-bind = $mainMod,       V,     togglefloating,
-bind = $mainMod,       SPACE, exec,           wofi --show drun
-bind = $mainMod,       P,     pseudo,
-bind = $mainMod,       J,     togglesplit,
-bind = $mainMod,       S,     exec,           grim -g "$(slurp)" - | swappy -f -
-bind = $mainMod,       F,     fullscreen,     0
-
-# Volume
-bind = , XF86AudioMute,        exec, pamixer -t
-bind = , XF86AudioLowerVolume, exec, pamixer -d 5
-bind = , XF86AudioRaiseVolume, exec, pamixer -i 5
-bind = , XF86AudioMicMute,     exec, pamixer --default-source -t
-bind = , XF86AudioPlay,        exec, playerctl play-pause
-bind = , XF86AudioPrev,        exec, playerctl previous
-bind = , XF86AudioNext,        exec, playerctl next
-
-# Brilho
-bind = , XF86MonBrightnessDown, exec, brightnessctl set 10%-
-bind = , XF86MonBrightnessUp,   exec, brightnessctl set 10%+
-
-# Foco
-bind = $mainMod, left,  movefocus, l
-bind = $mainMod, right, movefocus, r
-bind = $mainMod, up,    movefocus, u
-bind = $mainMod, down,  movefocus, d
-
-# Mover janelas
-bind = $mainMod SHIFT, left,  movewindow, l
-bind = $mainMod SHIFT, right, movewindow, r
-bind = $mainMod SHIFT, up,    movewindow, u
-bind = $mainMod SHIFT, down,  movewindow, d
-
-# Redimensionar janelas
-bind = $mainMod CTRL, left,  resizeactive, -40 0
-bind = $mainMod CTRL, right, resizeactive,  40 0
-bind = $mainMod CTRL, up,    resizeactive,  0 -40
-bind = $mainMod CTRL, down,  resizeactive,  0  40
-
-# Workspaces
-bind = $mainMod, 1, workspace, 1
-bind = $mainMod, 2, workspace, 2
-bind = $mainMod, 3, workspace, 3
-bind = $mainMod, 4, workspace, 4
-bind = $mainMod, 5, workspace, 5
-bind = $mainMod, 6, workspace, 6
-bind = $mainMod, 7, workspace, 7
-bind = $mainMod, 8, workspace, 8
-bind = $mainMod, 9, workspace, 9
-bind = $mainMod, 0, workspace, 10
-
-bind = $mainMod SHIFT, 1, movetoworkspace, 1
-bind = $mainMod SHIFT, 2, movetoworkspace, 2
-bind = $mainMod SHIFT, 3, movetoworkspace, 3
-bind = $mainMod SHIFT, 4, movetoworkspace, 4
-bind = $mainMod SHIFT, 5, movetoworkspace, 5
-bind = $mainMod SHIFT, 6, movetoworkspace, 6
-bind = $mainMod SHIFT, 7, movetoworkspace, 7
-bind = $mainMod SHIFT, 8, movetoworkspace, 8
-bind = $mainMod SHIFT, 9, movetoworkspace, 9
-bind = $mainMod SHIFT, 0, movetoworkspace, 10
-
-bind  = $mainMod, mouse_down, workspace, e+1
-bind  = $mainMod, mouse_up,   workspace, e-1
-bindm = $mainMod, mouse:272,  movewindow
-bindm = $mainMod, mouse:273,  resizewindow
-EOF
-ok "hyprland.conf escrito"
-
-# ── Kitty ─────────────────────────────────────────────────────────────────────
-msg "Configurando Kitty"
-cat > ~/.config/kitty/kitty.conf << 'EOF'
-include ./mocha.conf
-font_family      JetBrainsMono Nerd Font
-font_size        15.0
-bold_font        auto
-italic_font      auto
-bold_italic_font auto
-mouse_hide_wait  2.0
-cursor_shape     block
-url_color        #0087bd
-url_style        dotted
-confirm_os_window_close 0
-background_opacity 0.95
-EOF
-
-cat > ~/.config/kitty/mocha.conf << 'EOF'
-# Catppuccin Mocha
-foreground              #CDD6F4
-background              #1E1E2E
-selection_foreground    #1E1E2E
-selection_background    #F5E0DC
-cursor                  #F5E0DC
-cursor_text_color       #1E1E2E
-url_color               #F5E0DC
-active_border_color     #B4BEFE
-inactive_border_color   #6C7086
-bell_border_color       #F9E2AF
-wayland_titlebar_color  system
-macos_titlebar_color    system
-active_tab_foreground   #11111B
-active_tab_background   #CBA6F7
-inactive_tab_foreground #CDD6F4
-inactive_tab_background #181825
-tab_bar_background      #11111B
-mark1_foreground #1E1E2E
-mark1_background #B4BEFE
-mark2_foreground #1E1E2E
-mark2_background #CBA6F7
-mark3_foreground #1E1E2E
-mark3_background #74C7EC
-color0  #45475A
-color8  #585B70
-color1  #F38BA8
-color9  #F38BA8
-color2  #A6E3A1
-color10 #A6E3A1
-color3  #F9E2AF
-color11 #F9E2AF
-color4  #89B4FA
-color12 #89B4FA
-color5  #F5C2E7
-color13 #F5C2E7
-color6  #94E2D5
-color14 #94E2D5
-color7  #BAC2DE
-color15 #A6ADC8
-EOF
-ok "Kitty configurado"
-
-# ── Waybar config ─────────────────────────────────────────────────────────────
-msg "Configurando Waybar"
-cat > ~/.config/waybar/config.jsonc << 'EOF'
-{
-    "layer": "top",
-    "position": "top",
-    "mod": "dock",
-    "exclusive": true,
-    "passthrough": false,
-    "gtk-layer-shell": true,
-    "height": 50,
-    "modules-left":   ["clock", "custom/weather", "hyprland/workspaces"],
-    "modules-center": ["hyprland/window"],
-    "modules-right":  ["network", "bluetooth", "temperature", "battery", "backlight", "pulseaudio", "pulseaudio#microphone", "tray"],
-
-    "hyprland/window": { "format": "{}" },
-
-    "hyprland/workspaces": {
-        "disable-scroll": true,
-        "all-outputs": true,
-        "on-click": "activate",
-        "persistent-workspaces": {
-            "1": [], "2": [], "3": [], "4": [], "5": [],
-            "6": [], "7": [], "8": [], "9": [], "10": []
-        }
-    },
-
-    "custom/weather": {
-        "tooltip":     true,
-        "format":      "{}",
-        "interval":    30,
-        "exec":        "~/.config/waybar/scripts/waybar-wttr.py",
-        "return-type": "json"
-    },
-
-    "tray": { "icon-size": 18, "spacing": 10 },
-
-    "clock": {
-        "format":         "{: %H:%M   %a, %d/%m}",
-        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
-    },
-
-    "backlight": {
-        "device":         "intel_backlight",
-        "format":         "{icon} {percent}%",
-        "format-icons":   ["󰃞", "󰃟", "󰃠"],
-        "on-scroll-up":   "brightnessctl set 1%+",
-        "on-scroll-down": "brightnessctl set 1%-",
-        "min-length":     6
-    },
-
-    "battery": {
-        "states":          { "good": 95, "warning": 30, "critical": 20 },
-        "format":          "{icon} {capacity}%",
-        "format-charging": " {capacity}%",
-        "format-plugged":  " {capacity}%",
-        "format-alt":      "{time} {icon}",
-        "format-icons":    ["󰂎","󰁺","󰁻","󰁼","󰁽","󰁾","󰁿","󰂀","󰂁","󰂂","󰁹"]
-    },
-
-    "pulseaudio": {
-        "format":        "{icon} {volume}%",
-        "tooltip":       false,
-        "format-muted":  " Mudo",
-        "on-click":      "pamixer -t",
-        "on-scroll-up":  "pamixer -i 5",
-        "on-scroll-down":"pamixer -d 5",
-        "scroll-step":   5,
-        "format-icons": {
-            "headphone": "", "hands-free": "", "headset": "",
-            "phone": "", "portable": "", "car": "",
-            "default": ["", "", ""]
-        }
-    },
-
-    "pulseaudio#microphone": {
-        "format":              "{format_source}",
-        "format-source":       " {volume}%",
-        "format-source-muted": " Mudo",
-        "on-click":            "pamixer --default-source -t",
-        "on-scroll-up":        "pamixer --default-source -i 5",
-        "on-scroll-down":      "pamixer --default-source -d 5",
-        "scroll-step": 5
-    },
-
-    "temperature": {
-        "thermal-zone":       1,
-        "format":             "{temperatureC}°C ",
-        "critical-threshold": 80,
-        "format-critical":    "{temperatureC}°C "
-    },
-
-    "network": {
-        "format-wifi":         "  {signalStrength}%",
-        "format-ethernet":     "{ipaddr}/{cidr}",
-        "tooltip-format":      "{essid} - {ifname} via {gwaddr}",
-        "format-linked":       "{ifname} (Sem IP)",
-        "format-disconnected": "Desconectado ⚠",
-        "format-alt":          "{ifname}:{essid} {ipaddr}/{cidr}"
-    },
-
-    "bluetooth": {
-        "format":                             " {status}",
-        "format-disabled":                    "",
-        "format-connected":                   " {num_connections}",
-        "tooltip-format":                     "{device_alias}",
-        "tooltip-format-connected":           " {device_enumerate}",
-        "tooltip-format-enumerate-connected": "{device_alias}"
-    }
-}
-EOF
-
-cat > ~/.config/waybar/style.css << 'EOF'
-* {
-    border: none;
-    border-radius: 0;
-    font-family: "JetBrainsMono Nerd Font";
-    font-weight: bold;
-    font-size: 16px;
-    min-height: 0;
-}
-window#waybar {
-    background: rgba(21, 18, 27, 0);
-    color: #cdd6f4;
-}
-tooltip {
-    background: #1e1e2e;
-    border-radius: 10px;
-    border-width: 2px;
-    border-style: solid;
-    border-color: #11111b;
-}
-#workspaces button             { padding: 5px; color: #313244; margin-right: 5px; }
-#workspaces button.active      { color: #a6adc8; }
-#workspaces button.focused     { color: #a6adc8; background: #eba0ac; border-radius: 10px; }
-#workspaces button.urgent      { color: #11111b; background: #a6e3a1; border-radius: 10px; }
-#workspaces button:hover       { background: #11111b; color: #cdd6f4; border-radius: 10px; }
-#custom-weather, #window, #clock, #battery, #pulseaudio,
-#network, #bluetooth, #temperature, #workspaces, #tray, #backlight {
-    background: #1e1e2e;
-    opacity: 0.8;
-    padding: 0px 10px;
-    margin: 3px 0px;
-    margin-top: 10px;
-    border: 1px solid #181825;
-}
-#temperature           { border-radius: 10px 0px 0px 10px; }
-#temperature.critical  { color: #eba0ac; }
-#backlight             { border-radius: 10px 0px 0px 10px; }
-#tray                  { border-radius: 10px; margin-right: 10px; }
-#workspaces            { background: #1e1e2e; border-radius: 10px; margin-left: 10px; padding-right: 0px; padding-left: 5px; }
-#window                { border-radius: 10px; margin-left: 60px; margin-right: 60px; }
-#clock                 { color: #fab387; border-radius: 10px 0px 0px 10px; margin-left: 10px; border-right: 0px; }
-#network               { color: #f9e2af; border-radius: 10px 0px 0px 10px; border-left: 0px; border-right: 0px; }
-#bluetooth             { color: #89b4fa; border-radius: 0px 10px 10px 0px; margin-right: 10px; }
-#pulseaudio            { color: #89b4fa; border-left: 0px; border-right: 0px; }
-#pulseaudio.microphone { color: #cba6f7; border-left: 0px; border-right: 0px; border-radius: 0px 10px 10px 0px; margin-right: 10px; }
-#battery               { color: #a6e3a1; border-radius: 0 10px 10px 0; margin-right: 10px; border-left: 0px; }
-#custom-weather        { border-radius: 0px 10px 10px 0px; border-right: 0px; margin-left: 0px; }
-EOF
-ok "Waybar configurado"
-
-# ── Script de clima ───────────────────────────────────────────────────────────
-msg "Escrevendo script de clima (°C)"
-cat > ~/.config/waybar/scripts/waybar-wttr.py << 'EOF'
-#!/usr/bin/env python3
-
-import json
-import requests
-from datetime import datetime
-
-WEATHER_CODES = {
-    '113': '☀️ ', '116': '⛅ ', '119': '☁️ ', '122': '☁️ ',
-    '143': '☁️ ', '176': '🌧️', '179': '🌧️', '182': '🌧️',
-    '185': '🌧️', '200': '⛈️ ', '227': '🌨️', '230': '🌨️',
-    '248': '☁️ ', '260': '☁️ ', '263': '🌧️', '266': '🌧️',
-    '281': '🌧️', '284': '🌧️', '293': '🌧️', '296': '🌧️',
-    '299': '🌧️', '302': '🌧️', '305': '🌧️', '308': '🌧️',
-    '311': '🌧️', '314': '🌧️', '317': '🌧️', '320': '🌨️',
-    '323': '🌨️', '326': '🌨️', '329': '❄️ ', '332': '❄️ ',
-    '335': '❄️ ', '338': '❄️ ', '350': '🌧️', '353': '🌧️',
-    '356': '🌧️', '359': '🌧️', '362': '🌧️', '365': '🌧️',
-    '368': '🌧️', '371': '❄️ ', '374': '🌨️', '377': '🌨️',
-    '386': '🌨️', '389': '🌨️', '392': '🌧️', '395': '❄️ '
-}
-
-def format_time(time):
-    return time.replace("00", "").zfill(2)
-
-def format_chances(hour):
-    chances = {
-        "chanceoffog":      "Névoa",
-        "chanceoffrost":    "Geada",
-        "chanceofovercast": "Nublado",
-        "chanceofrain":     "Chuva",
-        "chanceofsnow":     "Neve",
-        "chanceofsunshine": "Sol",
-        "chanceofthunder":  "Trovoada",
-        "chanceofwindy":    "Vento"
-    }
-    conditions = []
-    for event, label in chances.items():
-        if int(hour.get(event, 0)) > 0:
-            conditions.append(f"{label} {hour[event]}%")
-    return ", ".join(conditions)
-
-try:
-    weather  = requests.get("https://wttr.in/?format=j1", timeout=10).json()
-    current  = weather['current_condition'][0]
-    temp_c   = current['FeelsLikeC']
-    temp_dis = current['temp_C']
-    icon     = WEATHER_CODES.get(current['weatherCode'], '?')
-
-    data = {}
-    data['text'] = f" {icon} {temp_c}°C"
-
-    desc = current['weatherDesc'][0]['value']
-    data['tooltip']  = f"<b>{desc} {temp_dis}°C</b>\n"
-    data['tooltip'] += f"Sensação: {temp_c}°C\n"
-    data['tooltip'] += f"Vento: {current['windspeedKmph']} km/h\n"
-    data['tooltip'] += f"Umidade: {current['humidity']}%\n"
-
-    for i, day in enumerate(weather['weather']):
-        data['tooltip'] += "\n<b>"
-        if i == 0:   data['tooltip'] += "Hoje, "
-        elif i == 1: data['tooltip'] += "Amanhã, "
-        data['tooltip'] += f"{day['date']}</b>\n"
-        data['tooltip'] += f"⬆️ {day['maxtempC']}°C  ⬇️ {day['mintempC']}°C  "
-        data['tooltip'] += f"🌅 {day['astronomy'][0]['sunrise']}  🌇 {day['astronomy'][0]['sunset']}\n"
-        for hour in day['hourly']:
-            if i == 0 and int(format_time(hour['time'])) < datetime.now().hour - 2:
-                continue
-            h_icon    = WEATHER_CODES.get(hour['weatherCode'], '?')
-            h_temp    = hour['FeelsLikeC'].ljust(3)
-            h_desc    = hour['weatherDesc'][0]['value']
-            h_chances = format_chances(hour)
-            data['tooltip'] += f"{format_time(hour['time'])}h {h_icon} {h_temp}°C {h_desc}"
-            if h_chances:
-                data['tooltip'] += f", {h_chances}"
-            data['tooltip'] += "\n"
-
-    print(json.dumps(data))
-
-except Exception as e:
-    print(json.dumps({"text": "⚠️ clima", "tooltip": str(e)}))
-EOF
-chmod +x ~/.config/waybar/scripts/waybar-wttr.py
-ok "Script de clima escrito (°C)"
-
-# ── Mako ──────────────────────────────────────────────────────────────────────
-msg "Configurando Mako (notificações)"
-cat > ~/.config/mako/config << 'EOF'
-background-color=#1e1e2e
-text-color=#cdd6f4
-border-color=#313244
-border-radius=10
-border-size=2
-font=JetBrainsMono Nerd Font 12
-padding=10
-margin=10
-width=350
-height=150
-layer=overlay
-anchor=top-right
-EOF
-ok "Mako configurado"
-
-# ── Starship ──────────────────────────────────────────────────────────────────
-if confirm "Configurar o Starship (prompt customizado)?"; then
-    cat > ~/.config/starship.toml << 'EOF'
-format = """
-[░▒▓](#a3aed2)\
-[  ](bg:#a3aed2 fg:#090c0c)\
-[](bg:#769ff0 fg:#a3aed2)\
-$directory\
-[](fg:#769ff0 bg:#394260)\
-$git_branch\
-$git_status\
-[](fg:#394260 bg:#212736)\
-$nodejs\
-$rust\
-$golang\
-$php\
-[](fg:#212736 bg:#1d2230)\
-$time\
-[ ](fg:#1d2230)\
-\n$character"""
-
-[directory]
-style = "fg:#e3e5e5 bg:#769ff0"
-format = "[ $path ]($style)"
-truncation_length = 3
-truncation_symbol = "…/"
-
-[directory.substitutions]
-"Documentos" = " "
-"Downloads"  = " "
-"Música"     = " "
-"Imagens"    = " "
-
-[git_branch]
-symbol = ""
-style  = "bg:#394260"
-format = '[[ $symbol $branch ](fg:#769ff0 bg:#394260)]($style)'
-
-[git_status]
-style  = "bg:#394260"
-format = '[[($all_status$ahead_behind )](fg:#769ff0 bg:#394260)]($style)'
-
-[nodejs]
-symbol = ""
-style  = "bg:#212736"
-format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
-
-[rust]
-symbol = ""
-style  = "bg:#212736"
-format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
-
-[golang]
-symbol = "ﳑ"
-style  = "bg:#212736"
-format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
-
-[php]
-symbol = ""
-style  = "bg:#212736"
-format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
-
-[time]
-disabled    = false
-time_format = "%H:%M"
-style       = "bg:#1d2230"
-format      = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
-EOF
-
-    grep -q "starship init" ~/.bashrc || \
-        echo -e '\neval "$(starship init bash)"' >> ~/.bashrc
-    ok "Starship configurado"
-fi
-
-# ==============================================================================
-# FASE 3 — PÓS-CONFIGURAÇÃO
-# ==============================================================================
-header "FASE 3 — Pós-configuração"
-
-# ── Tema escuro GTK ───────────────────────────────────────────────────────────
-msg "Aplicando tema Dracula GTK"
-gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
-gsettings set org.gnome.desktop.interface gtk-theme    'Dracula'
-gsettings set org.gnome.desktop.interface icon-theme   'Dracula'
-gsettings set org.gnome.desktop.interface cursor-theme 'Adwaita'
-
-GTK3_SETTINGS="$HOME/.config/gtk-3.0/settings.ini"
-cat > "$GTK3_SETTINGS" << 'EOF'
-[Settings]
-gtk-application-prefer-dark-theme=1
-gtk-theme-name=Dracula
-gtk-icon-theme-name=Dracula
-gtk-cursor-theme-name=Adwaita
-gtk-font-name=Noto Sans 11
-EOF
-ok "Tema Dracula GTK aplicado"
-
-# ── Chromium: flags Wayland + PipeWire ────────────────────────────────────────
-msg "Otimizando Chromium para Wayland e PipeWire"
-CHROMIUM_FLAGS="$HOME/.config/chromium-flags.conf"
-touch "$CHROMIUM_FLAGS"
-grep -qF -- "--ozone-platform-hint=auto"               "$CHROMIUM_FLAGS" || \
-    echo "--ozone-platform-hint=auto"               >> "$CHROMIUM_FLAGS"
-grep -qF -- "--enable-features=WebRTCPipeWireCapturer" "$CHROMIUM_FLAGS" || \
-    echo "--enable-features=WebRTCPipeWireCapturer" >> "$CHROMIUM_FLAGS"
-ok "Flags do Chromium configuradas"
-
-# ── SDDM (gerenciador de login) ───────────────────────────────────────────────
-if confirm "Instalar e ativar o SDDM como gerenciador de login?"; then
-    sudo pacman -S --needed --noconfirm sddm
-    sudo systemctl enable sddm.service
-    ok "SDDM instalado e ativado"
-fi
-
-# ==============================================================================
-# CONCLUSÃO
-# ==============================================================================
+# ── Conclusão ─────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}${BOLD}"
 echo "  ╔══════════════════════════════════════════════╗"
-echo "  ║         ✔  Setup concluído!                  ║"
+echo "  ║     ✔  Fix NVIDIA concluído!                 ║"
 echo "  ╠══════════════════════════════════════════════╣"
-echo "  ║  Fase 1: Arch pós-instalação    ✔            ║"
-echo "  ║  Fase 2: Hyprland + configs     ✔            ║"
-echo "  ║  Fase 3: Pós-configuração       ✔            ║"
+echo "  ║  • nouveau bloqueado             ✔           ║"
+echo "  ║  • nvidia-dkms instalado         ✔           ║"
+echo "  ║  • initramfs reconstruído        ✔           ║"
+echo "  ║  • bootloader configurado        ✔           ║"
+echo "  ║  • hyprland.conf atualizado      ✔           ║"
+echo "  ║  • SDDM configurado (Wayland)    ✔           ║"
 echo "  ╚══════════════════════════════════════════════╝"
 echo -e "${RESET}"
-echo -e "${CYAN}${BOLD}  Resumo das atualizações aplicadas:${RESET}"
-echo -e "  • swaylock-effects → hyprlock  (nativo, mais estável)"
-echo -e "  • swaybg           → hyprpaper (nativo, IPC)"
-echo -e "  • polkit-gnome     → hyprpolkitagent"
-echo -e "  • Adicionado hypridle (idle/sleep automático)"
-echo -e "  • Adicionado PipeWire + WirePlumber"
-echo -e "  • Tema Dracula aplicado (GTK + ícones)"
-echo -e "  • Novos atalhos: Ctrl+Setas (resize), Shift+Setas (mover), Super+F (fullscreen)"
-echo ""
-warn "Faça logout e login (ou reinicie) para aplicar todas as mudanças."
+
+if $IS_OPTIMUS; then
+    warn "Optimus detectado: use 'nvidia-run <app>' para a GPU dedicada."
+fi
+
+warn "O reboot é OBRIGATÓRIO para o driver NVIDIA entrar em efeito."
 echo ""
 
-if confirm "Iniciar o Hyprland agora?"; then
-    exec Hyprland
+if confirm "Reiniciar agora para aplicar as mudanças?"; then
+    sudo reboot
 fi
