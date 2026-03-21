@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-#  arch-setup.sh
+#  arch-setup.sh  —  Atualizado para 2025
 #  Uso: git clone <seu-repo> && cd <repo> && ./arch-setup.sh
 #
 #  Fluxo esperado:
@@ -14,6 +14,15 @@
 #    wallpaper.jpg   ← (ou .png / .jpeg) wallpaper que será copiado
 #
 #  Tema: Catppuccin Mocha | Clima em °C | Teclado BR | Sem binds ROG
+#
+#  Mudanças vs versão anterior:
+#    - swaylock-effects  → hyprlock   (nativo Hyprland, mais estável)
+#    - swaybg            → hyprpaper  (nativo Hyprland, config própria)
+#    - polkit-gnome      → hyprpolkitagent (nativo Hyprland)
+#    - Adicionado hypridle (idle/suspend manager nativo)
+#    - dracula-icons-git → dracula-icons-theme (versão estável)
+#    - Removido script manual xdg-portal (systemd cuida disso)
+#    - hyprland.conf com sintaxe moderna (sem deprecated keys)
 # ==============================================================================
 
 set -e
@@ -47,7 +56,6 @@ header() {
 }
 
 # ── Diretório raiz do repositório ─────────────────────────────────────────────
-# Sempre o diretório onde este script está, independente de onde for chamado
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ==============================================================================
@@ -55,20 +63,17 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ==============================================================================
 header "FASE 0 — Verificações Iniciais"
 
-# Não rodar como root
 if [[ "$EUID" -eq 0 ]]; then
     err "Não execute este script como root. Use um usuário normal com sudo."
     exit 1
 fi
 
-# Sudo disponível
 if ! sudo -v &>/dev/null; then
     err "Este usuário não tem privilégios sudo."
     exit 1
 fi
 ok "Privilégios sudo confirmados"
 
-# Confirma que está dentro do repositório (arquivo sentinela)
 if [[ ! -f "$REPO_DIR/arch-setup.sh" ]]; then
     err "Execute o script de dentro do repositório clonado."
     exit 1
@@ -139,7 +144,6 @@ else
     cd yay
     makepkg -si --noconfirm
     yay -Y --gendb
-    # Volta para o repo após instalar o yay
     cd "$REPO_DIR"
     ok "yay instalado"
 fi
@@ -163,7 +167,9 @@ sudo pacman -S --needed --noconfirm \
     shotwell \
     audacity \
     easytag \
-    flatpak
+    flatpak \
+    pipewire pipewire-pulse pipewire-audio wireplumber \
+    qt5-wayland qt6-wayland
 ok "Pacotes pacman instalados"
 
 # ── Flatpak + Flathub ─────────────────────────────────────────────────────────
@@ -196,6 +202,11 @@ msg "Ativando Bluetooth"
 sudo systemctl enable --now bluetooth.service
 ok "Bluetooth ativado"
 
+# ── PipeWire ──────────────────────────────────────────────────────────────────
+msg "Ativando PipeWire"
+systemctl --user enable --now pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+ok "PipeWire ativado"
+
 # ── Wi-Fi Powersave ───────────────────────────────────────────────────────────
 if confirm "Desabilitar Wi-Fi powersave (recomendado para estabilidade)?"; then
     WIFI_CONF="/etc/NetworkManager/conf.d/wifi-powersave.conf"
@@ -212,18 +223,49 @@ header "FASE 2 — Instalação e Configuração do Hyprland"
 
 # ── Pacotes do Hyprland ───────────────────────────────────────────────────────
 msg "Instalando pacotes do Hyprland"
-yay -S --needed --noconfirm \
-    hyprland kitty waybar \
-    swaybg swaylock-effects wofi wlogout mako thunar \
-    ttf-jetbrains-mono-nerd noto-fonts-emoji \
-    polkit-gnome python-requests starship \
-    swappy grim slurp pamixer brightnessctl gvfs \
-    bluez bluez-utils lxappearance xfce4-settings \
-    dracula-gtk-theme dracula-icons-git \
-    xdg-desktop-portal-hyprland
 
+# Pacotes do repositório oficial
+sudo pacman -S --needed --noconfirm \
+    hyprland \
+    hyprlock \
+    hypridle \
+    hyprpaper \
+    hyprpolkitagent \
+    xdg-desktop-portal-hyprland \
+    xdg-desktop-portal-gtk \
+    kitty \
+    waybar \
+    wofi \
+    mako \
+    thunar \
+    gvfs \
+    grim \
+    slurp \
+    swappy \
+    pamixer \
+    brightnessctl \
+    ttf-jetbrains-mono-nerd \
+    noto-fonts-emoji \
+    python-requests \
+    starship \
+    bluez \
+    bluez-utils \
+    lxappearance \
+    xfce4-settings \
+    wl-clipboard \
+    xorg-xwayland
+
+# Pacotes do AUR
+msg "Instalando pacotes AUR do Hyprland"
+yay -S --needed --noconfirm \
+    wlogout \
+    dracula-gtk-theme \
+    dracula-icons-theme
+
+# Remove portais XDG conflitantes (GNOME sobrescreve o Hyprland)
 msg "Removendo portais XDG conflitantes"
-yay -R --noconfirm xdg-desktop-portal-gnome xdg-desktop-portal-gtk 2>/dev/null || true
+sudo pacman -R --noconfirm xdg-desktop-portal-gnome 2>/dev/null || true
+
 ok "Pacotes do Hyprland instalados"
 
 # ── Diretórios ────────────────────────────────────────────────────────────────
@@ -232,41 +274,153 @@ mkdir -p ~/.config/hypr
 mkdir -p ~/.config/kitty
 mkdir -p ~/.config/waybar/scripts
 mkdir -p ~/.config/mako
-mkdir -p ~/.config/swaylock
+mkdir -p ~/.config/hyprlock
 mkdir -p ~/.config/wofi
 mkdir -p ~/.config/gtk-3.0
 ok "Diretórios criados"
 
 # ── Wallpaper ─────────────────────────────────────────────────────────────────
 msg "Copiando wallpaper"
+WALLPAPER_DEST_PATH="$HOME/.config/hypr/wallpaper"
 if [[ -n "$WALLPAPER_SRC" ]]; then
-    cp "$WALLPAPER_SRC" ~/.config/hypr/wallpaper.$WALLPAPER_EXT
-    # Normaliza sempre para wallpaper.jpg no hyprland.conf (independente da extensão)
-    WALLPAPER_DEST="~/.config/hypr/wallpaper.$WALLPAPER_EXT"
-    ok "Wallpaper copiado para ~/.config/hypr/wallpaper.$WALLPAPER_EXT"
+    cp "$WALLPAPER_SRC" "${WALLPAPER_DEST_PATH}.${WALLPAPER_EXT}"
+    WALLPAPER_FULL="${WALLPAPER_DEST_PATH}.${WALLPAPER_EXT}"
+    ok "Wallpaper copiado para ${WALLPAPER_FULL}"
 else
-    WALLPAPER_DEST="~/.config/hypr/wallpaper.jpg"
-    warn "Sem wallpaper — edite a linha 'exec = swaybg ...' no hyprland.conf depois."
+    WALLPAPER_FULL="${WALLPAPER_DEST_PATH}.jpg"
+    warn "Sem wallpaper — edite ~/.config/hypr/hyprpaper.conf depois."
 fi
+
+# ── hyprpaper.conf ────────────────────────────────────────────────────────────
+msg "Escrevendo hyprpaper.conf"
+cat > ~/.config/hypr/hyprpaper.conf << EOF
+preload = $WALLPAPER_FULL
+wallpaper = ,$WALLPAPER_FULL
+splash = false
+EOF
+ok "hyprpaper.conf escrito"
+
+# ── hypridle.conf ─────────────────────────────────────────────────────────────
+msg "Escrevendo hypridle.conf"
+cat > ~/.config/hypr/hypridle.conf << 'EOF'
+general {
+    lock_cmd         = pidof hyprlock || hyprlock
+    before_sleep_cmd = loginctl lock-session
+    after_sleep_cmd  = hyprctl dispatch dpms on
+}
+
+listener {
+    timeout  = 300
+    on-timeout = brightnessctl -s set 10
+    on-resume  = brightnessctl -r
+}
+
+listener {
+    timeout  = 330
+    on-timeout = loginctl lock-session
+}
+
+listener {
+    timeout  = 600
+    on-timeout = hyprctl dispatch dpms off
+    on-resume  = hyprctl dispatch dpms on
+}
+
+listener {
+    timeout  = 900
+    on-timeout = systemctl suspend
+}
+EOF
+ok "hypridle.conf escrito"
+
+# ── hyprlock.conf ─────────────────────────────────────────────────────────────
+msg "Escrevendo hyprlock.conf (Catppuccin Mocha)"
+cat > ~/.config/hypr/hyprlock.conf << 'EOF'
+general {
+    disable_loading_bar = false
+    hide_cursor         = true
+    grace               = 2
+    no_fade_in          = false
+}
+
+background {
+    monitor =
+    path    = screenshot
+    blur_passes = 3
+    blur_size   = 7
+    noise       = 0.0117
+    contrast    = 0.8916
+    brightness  = 0.8172
+    vibrancy    = 0.1696
+    vibrancy_darkness = 0.0
+}
+
+input-field {
+    monitor =
+    size = 250, 50
+    outline_thickness = 3
+    dots_size    = 0.33
+    dots_spacing = 0.15
+    dots_center  = false
+    outer_color  = rgb(cba6f7)
+    inner_color  = rgb(1e1e2e)
+    font_color   = rgb(cdd6f4)
+    fade_on_empty = true
+    placeholder_text = <i>Senha...</i>
+    hide_input   = false
+    position     = 0, -80
+    halign       = center
+    valign       = center
+}
+
+label {
+    monitor =
+    text     = cmd[update:1000] echo "$(date +"%H:%M")"
+    color    = rgba(cdd6f4ff)
+    font_size = 72
+    font_family = JetBrainsMono Nerd Font Bold
+    position = 0, 80
+    halign   = center
+    valign   = center
+}
+
+label {
+    monitor =
+    text     = cmd[update:1000] echo "$(date +'%a, %d de %B')"
+    color    = rgba(a6adc8ff)
+    font_size = 18
+    font_family = JetBrainsMono Nerd Font
+    position = 0, 0
+    halign   = center
+    valign   = center
+}
+EOF
+ok "hyprlock.conf escrito"
 
 # ── hyprland.conf ─────────────────────────────────────────────────────────────
 msg "Escrevendo hyprland.conf"
-cat > ~/.config/hypr/hyprland.conf << EOF
-# Monitores — modo automático
-# Exemplo dual monitor: monitor=DP-1,2560x1440@165,0x0,1
+cat > ~/.config/hypr/hyprland.conf << 'EOF'
+# ─── Monitores ────────────────────────────────────────────────────────────────
+# Modo automático — descomente e edite para dual monitor:
+# monitor=DP-1,2560x1440@165,0x0,1
 monitor=,preferred,auto,auto
 
-autogenerated = 0
-
-# Autostart
-exec-once = ~/.config/hypr/xdg-portal-hyprland
+# ─── Autostart ────────────────────────────────────────────────────────────────
 exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
 exec-once = systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
-exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+exec-once = hyprpolkitagent
 exec-once = waybar
 exec-once = mako
-exec       = swaybg -m fill -i $WALLPAPER_DEST
+exec-once = hypridle
+exec-once = hyprpaper
 
+# ─── Ambiente ─────────────────────────────────────────────────────────────────
+env = XCURSOR_SIZE,24
+env = HYPRCURSOR_SIZE,24
+env = QT_QPA_PLATFORM,wayland
+env = QT_WAYLAND_DISABLE_WINDOWDECORATION,1
+
+# ─── Input ────────────────────────────────────────────────────────────────────
 input {
     kb_layout    = br
     kb_variant   =
@@ -281,34 +435,44 @@ input {
     }
 }
 
+# ─── Aparência geral ──────────────────────────────────────────────────────────
 general {
     gaps_in             = 5
     gaps_out            = 20
     border_size         = 2
-    col.active_border   = rgb(cdd6f4)
+    col.active_border   = rgb(cba6f7) rgb(89b4fa) 45deg
     col.inactive_border = rgba(595959aa)
     layout              = dwindle
+    resize_on_border    = true
 }
 
 misc {
-    disable_hyprland_logo = yes
+    disable_hyprland_logo   = yes
+    disable_splash_rendering = yes
+    mouse_move_enables_dpms = true
+    key_press_enables_dpms  = true
 }
 
+# ─── Decoração ────────────────────────────────────────────────────────────────
 decoration {
     rounding = 10
 
     blur {
-        enabled = true
-        size    = 7
-        passes  = 3
+        enabled    = true
+        size       = 7
+        passes     = 3
+        new_optimizations = true
     }
 
-    drop_shadow         = yes
-    shadow_range        = 4
-    shadow_render_power = 3
-    col.shadow          = rgba(1a1a1aee)
+    shadow {
+        enabled        = true
+        range          = 4
+        render_power   = 3
+        color          = rgba(1a1a1aee)
+    }
 }
 
+# ─── Animações ────────────────────────────────────────────────────────────────
 animations {
     enabled = yes
     bezier  = myBezier, 0.05, 0.9, 0.1, 1.05
@@ -320,98 +484,107 @@ animations {
     animation = workspaces, 1, 6, default
 }
 
+# ─── Layouts ──────────────────────────────────────────────────────────────────
 dwindle {
     pseudotile     = yes
     preserve_split = yes
 }
 
 master {
-    new_is_master = true
+    new_status = master
 }
 
 gestures {
     workspace_swipe = on
 }
 
-# Transparência
-windowrulev2 = opacity 0.8 0.8, class:^(kitty)$
-windowrulev2 = opacity 0.8 0.8, class:^(thunar)$
+# ─── Regras de janela ─────────────────────────────────────────────────────────
+windowrulev2 = opacity 0.85 0.85, class:^(kitty)$
+windowrulev2 = opacity 0.85 0.85, class:^(thunar)$
+windowrulev2 = float, class:^(pavucontrol)$
+windowrulev2 = float, class:^(blueman-manager)$
+windowrulev2 = float, title:^(Gerenciador de arquivos)$
+
+# Corrige tearing em jogos/aplicações fullscreen
+windowrulev2 = immediate, class:^(steam_app_)(.*)$
 
 # ─── Atalhos ──────────────────────────────────────────────────────────────────
-\$mainMod = SUPER
+$mainMod = SUPER
 
-bind = \$mainMod,       Q,     exec,           kitty
-bind = \$mainMod SHIFT, X,     killactive,
-bind = \$mainMod,       L,     exec,           swaylock
-bind = \$mainMod,       M,     exec,           wlogout --protocol layer-shell
-bind = \$mainMod SHIFT, M,     exit,
-bind = \$mainMod,       E,     exec,           thunar
-bind = \$mainMod,       V,     togglefloating,
-bind = \$mainMod,       SPACE, exec,           wofi --show drun
-bind = \$mainMod,       P,     pseudo,
-bind = \$mainMod,       J,     togglesplit,
-bind = \$mainMod,       S,     exec,           grim -g "\$(slurp)" - | swappy -f -
+# Aplicações
+bind = $mainMod,       Q,     exec,           kitty
+bind = $mainMod SHIFT, X,     killactive,
+bind = $mainMod,       L,     exec,           hyprlock
+bind = $mainMod,       M,     exec,           wlogout --protocol layer-shell
+bind = $mainMod SHIFT, M,     exit,
+bind = $mainMod,       E,     exec,           thunar
+bind = $mainMod,       V,     togglefloating,
+bind = $mainMod,       SPACE, exec,           wofi --show drun
+bind = $mainMod,       P,     pseudo,
+bind = $mainMod,       J,     togglesplit,
+bind = $mainMod,       S,     exec,           grim -g "$(slurp)" - | swappy -f -
+bind = $mainMod,       F,     fullscreen,     0
 
 # Volume
 bind = , XF86AudioMute,        exec, pamixer -t
 bind = , XF86AudioLowerVolume, exec, pamixer -d 5
 bind = , XF86AudioRaiseVolume, exec, pamixer -i 5
 bind = , XF86AudioMicMute,     exec, pamixer --default-source -t
+bind = , XF86AudioPlay,        exec, playerctl play-pause
+bind = , XF86AudioPrev,        exec, playerctl previous
+bind = , XF86AudioNext,        exec, playerctl next
 
 # Brilho
 bind = , XF86MonBrightnessDown, exec, brightnessctl set 10%-
 bind = , XF86MonBrightnessUp,   exec, brightnessctl set 10%+
 
 # Foco
-bind = \$mainMod, left,  movefocus, l
-bind = \$mainMod, right, movefocus, r
-bind = \$mainMod, up,    movefocus, u
-bind = \$mainMod, down,  movefocus, d
+bind = $mainMod, left,  movefocus, l
+bind = $mainMod, right, movefocus, r
+bind = $mainMod, up,    movefocus, u
+bind = $mainMod, down,  movefocus, d
+
+# Mover janelas
+bind = $mainMod SHIFT, left,  movewindow, l
+bind = $mainMod SHIFT, right, movewindow, r
+bind = $mainMod SHIFT, up,    movewindow, u
+bind = $mainMod SHIFT, down,  movewindow, d
+
+# Redimensionar janelas
+bind = $mainMod CTRL, left,  resizeactive, -40 0
+bind = $mainMod CTRL, right, resizeactive,  40 0
+bind = $mainMod CTRL, up,    resizeactive,  0 -40
+bind = $mainMod CTRL, down,  resizeactive,  0  40
 
 # Workspaces
-bind = \$mainMod, 1, workspace, 1
-bind = \$mainMod, 2, workspace, 2
-bind = \$mainMod, 3, workspace, 3
-bind = \$mainMod, 4, workspace, 4
-bind = \$mainMod, 5, workspace, 5
-bind = \$mainMod, 6, workspace, 6
-bind = \$mainMod, 7, workspace, 7
-bind = \$mainMod, 8, workspace, 8
-bind = \$mainMod, 9, workspace, 9
-bind = \$mainMod, 0, workspace, 10
+bind = $mainMod, 1, workspace, 1
+bind = $mainMod, 2, workspace, 2
+bind = $mainMod, 3, workspace, 3
+bind = $mainMod, 4, workspace, 4
+bind = $mainMod, 5, workspace, 5
+bind = $mainMod, 6, workspace, 6
+bind = $mainMod, 7, workspace, 7
+bind = $mainMod, 8, workspace, 8
+bind = $mainMod, 9, workspace, 9
+bind = $mainMod, 0, workspace, 10
 
-bind = \$mainMod SHIFT, 1, movetoworkspace, 1
-bind = \$mainMod SHIFT, 2, movetoworkspace, 2
-bind = \$mainMod SHIFT, 3, movetoworkspace, 3
-bind = \$mainMod SHIFT, 4, movetoworkspace, 4
-bind = \$mainMod SHIFT, 5, movetoworkspace, 5
-bind = \$mainMod SHIFT, 6, movetoworkspace, 6
-bind = \$mainMod SHIFT, 7, movetoworkspace, 7
-bind = \$mainMod SHIFT, 8, movetoworkspace, 8
-bind = \$mainMod SHIFT, 9, movetoworkspace, 9
-bind = \$mainMod SHIFT, 0, movetoworkspace, 10
+bind = $mainMod SHIFT, 1, movetoworkspace, 1
+bind = $mainMod SHIFT, 2, movetoworkspace, 2
+bind = $mainMod SHIFT, 3, movetoworkspace, 3
+bind = $mainMod SHIFT, 4, movetoworkspace, 4
+bind = $mainMod SHIFT, 5, movetoworkspace, 5
+bind = $mainMod SHIFT, 6, movetoworkspace, 6
+bind = $mainMod SHIFT, 7, movetoworkspace, 7
+bind = $mainMod SHIFT, 8, movetoworkspace, 8
+bind = $mainMod SHIFT, 9, movetoworkspace, 9
+bind = $mainMod SHIFT, 0, movetoworkspace, 10
 
-bind  = \$mainMod, mouse_down, workspace, e+1
-bind  = \$mainMod, mouse_up,   workspace, e-1
-bindm = \$mainMod, mouse:272,  movewindow
-bindm = \$mainMod, mouse:273,  resizewindow
+bind  = $mainMod, mouse_down, workspace, e+1
+bind  = $mainMod, mouse_up,   workspace, e-1
+bindm = $mainMod, mouse:272,  movewindow
+bindm = $mainMod, mouse:273,  resizewindow
 EOF
 ok "hyprland.conf escrito"
-
-# ── xdg-portal-hyprland ───────────────────────────────────────────────────────
-msg "Escrevendo xdg-portal-hyprland"
-cat > ~/.config/hypr/xdg-portal-hyprland << 'EOF'
-#!/bin/bash
-sleep 1
-killall xdg-desktop-portal-hyprland 2>/dev/null || true
-killall xdg-desktop-portal-wlr      2>/dev/null || true
-killall xdg-desktop-portal          2>/dev/null || true
-/usr/lib/xdg-desktop-portal-hyprland &
-sleep 2
-/usr/lib/xdg-desktop-portal &
-EOF
-chmod +x ~/.config/hypr/xdg-portal-hyprland
-ok "xdg-portal-hyprland escrito"
 
 # ── Kitty ─────────────────────────────────────────────────────────────────────
 msg "Configurando Kitty"
@@ -723,50 +896,6 @@ EOF
 chmod +x ~/.config/waybar/scripts/waybar-wttr.py
 ok "Script de clima escrito (°C)"
 
-# ── Swaylock ──────────────────────────────────────────────────────────────────
-msg "Configurando Swaylock"
-cat > ~/.config/swaylock/config << 'EOF'
-daemonize
-show-failed-attempts
-clock
-screenshot
-effect-blur=9x5
-effect-vignette=0.5:0.5
-color=1f1d2e80
-font="JetBrainsMono Nerd Font"
-indicator
-indicator-radius=200
-indicator-thickness=20
-line-color=1f1d2e
-ring-color=191724
-inside-color=1f1d2e
-key-hl-color=eb6f92
-separator-color=00000000
-text-color=e0def4
-text-caps-lock-color=""
-line-ver-color=eb6f92
-ring-ver-color=eb6f92
-inside-ver-color=1f1d2e
-text-ver-color=e0def4
-ring-wrong-color=31748f
-text-wrong-color=31748f
-inside-wrong-color=1f1d2e
-inside-clear-color=1f1d2e
-text-clear-color=e0def4
-ring-clear-color=9ccfd8
-line-clear-color=1f1d2e
-line-wrong-color=1f1d2e
-bs-hl-color=31748f
-grace=2
-grace-no-mouse
-grace-no-touch
-datestr=%a, %d de %B
-timestr=%H:%M
-fade-in=0.2
-ignore-empty-password
-EOF
-ok "Swaylock configurado"
-
 # ── Mako ──────────────────────────────────────────────────────────────────────
 msg "Configurando Mako (notificações)"
 cat > ~/.config/mako/config << 'EOF'
@@ -865,17 +994,22 @@ fi
 header "FASE 3 — Pós-configuração"
 
 # ── Tema escuro GTK ───────────────────────────────────────────────────────────
-msg "Aplicando tema escuro GTK"
+msg "Aplicando tema Dracula GTK"
 gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
-gsettings set org.gnome.desktop.interface gtk-theme    'Adwaita-dark'
+gsettings set org.gnome.desktop.interface gtk-theme    'Dracula'
+gsettings set org.gnome.desktop.interface icon-theme   'Dracula'
+gsettings set org.gnome.desktop.interface cursor-theme 'Adwaita'
 
 GTK3_SETTINGS="$HOME/.config/gtk-3.0/settings.ini"
-if ! grep -q "gtk-application-prefer-dark-theme" "$GTK3_SETTINGS" 2>/dev/null; then
-    printf "[Settings]\ngtk-application-prefer-dark-theme=1\n" >> "$GTK3_SETTINGS"
-else
-    sed -i 's/gtk-application-prefer-dark-theme=0/gtk-application-prefer-dark-theme=1/' "$GTK3_SETTINGS"
-fi
-ok "Tema escuro GTK aplicado"
+cat > "$GTK3_SETTINGS" << 'EOF'
+[Settings]
+gtk-application-prefer-dark-theme=1
+gtk-theme-name=Dracula
+gtk-icon-theme-name=Dracula
+gtk-cursor-theme-name=Adwaita
+gtk-font-name=Noto Sans 11
+EOF
+ok "Tema Dracula GTK aplicado"
 
 # ── Chromium: flags Wayland + PipeWire ────────────────────────────────────────
 msg "Otimizando Chromium para Wayland e PipeWire"
@@ -886,6 +1020,13 @@ grep -qF -- "--ozone-platform-hint=auto"               "$CHROMIUM_FLAGS" || \
 grep -qF -- "--enable-features=WebRTCPipeWireCapturer" "$CHROMIUM_FLAGS" || \
     echo "--enable-features=WebRTCPipeWireCapturer" >> "$CHROMIUM_FLAGS"
 ok "Flags do Chromium configuradas"
+
+# ── SDDM (gerenciador de login) ───────────────────────────────────────────────
+if confirm "Instalar e ativar o SDDM como gerenciador de login?"; then
+    sudo pacman -S --needed --noconfirm sddm
+    sudo systemctl enable sddm.service
+    ok "SDDM instalado e ativado"
+fi
 
 # ==============================================================================
 # CONCLUSÃO
@@ -899,7 +1040,16 @@ echo "  ║  Fase 2: Hyprland + configs     ✔            ║"
 echo "  ║  Fase 3: Pós-configuração       ✔            ║"
 echo "  ╚══════════════════════════════════════════════╝"
 echo -e "${RESET}"
-warn "Faça logout e login (ou reinicie) para aplicar todas as mudanças GTK."
+echo -e "${CYAN}${BOLD}  Resumo das atualizações aplicadas:${RESET}"
+echo -e "  • swaylock-effects → hyprlock  (nativo, mais estável)"
+echo -e "  • swaybg           → hyprpaper (nativo, IPC)"
+echo -e "  • polkit-gnome     → hyprpolkitagent"
+echo -e "  • Adicionado hypridle (idle/sleep automático)"
+echo -e "  • Adicionado PipeWire + WirePlumber"
+echo -e "  • Tema Dracula aplicado (GTK + ícones)"
+echo -e "  • Novos atalhos: Ctrl+Setas (resize), Shift+Setas (mover), Super+F (fullscreen)"
+echo ""
+warn "Faça logout e login (ou reinicie) para aplicar todas as mudanças."
 echo ""
 
 if confirm "Iniciar o Hyprland agora?"; then
