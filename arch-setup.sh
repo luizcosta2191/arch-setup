@@ -1188,27 +1188,26 @@ ExecStart=-/usr/bin/agetty --autologin ${CURRENT_USER} --noclear %I \$TERM
 Type=idle
 AUTOEOF
 
-# 2. Adicionar startx automático ao .bash_profile
-# (só inicia no tty1 e só se não tiver display rodando)
-BASH_PROFILE="$HOME/.bash_profile"
-
-if ! grep -q "exec startx" "$BASH_PROFILE" 2>/dev/null; then
-    cat >> "$BASH_PROFILE" << 'BASHEOF'
-
+# 2. Adicionar startx automático — cobre bash, zsh e sh
+STARTX_SNIPPET='
 # Iniciar Openbox automaticamente ao logar no tty1
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
     exec startx
-fi
-BASHEOF
-fi
+fi'
 
-# 3. Garantir que .bash_profile é lido pelo bash
-BASHRC="$HOME/.bashrc"
-if ! grep -q ".bash_profile" "$BASHRC" 2>/dev/null; then
-    cat >> "$BASHRC" << 'RCEOF'
+for PROFILE in "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zprofile"; do
+    if ! grep -q "exec startx" "$PROFILE" 2>/dev/null; then
+        echo "$STARTX_SNIPPET" >> "$PROFILE"
+        log "startx automático adicionado em: $PROFILE"
+    fi
+done
 
-# Carregar .bash_profile se existir
-if [ -f "$HOME/.bash_profile" ]; then
+# 3. Garantir que .bashrc carrega .bash_profile (alguns setups do Arch não fazem isso)
+if ! grep -q "bash_profile" "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" << 'RCEOF'
+
+# Carregar .bash_profile se existir e estiver no tty
+if [ -f "$HOME/.bash_profile" ] && [ -z "$DISPLAY" ]; then
     source "$HOME/.bash_profile"
 fi
 RCEOF
