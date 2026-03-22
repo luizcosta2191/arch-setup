@@ -471,8 +471,11 @@ if [ ! -f "$HOME/.config/openbox/menu.xml" ]; then
     cp /etc/xdg/openbox/menu.xml "$HOME/.config/openbox/menu.xml"
 fi
 
-# autostart
-cat > "$HOME/.config/openbox/autostart" << 'EOF'
+# autostart — usar variável expandida para o path do polybar
+AUTOSTART_FILE="$HOME/.config/openbox/autostart"
+POLYBAR_LAUNCH="$HOME/.config/polybar/launch.sh"
+
+cat > "$AUTOSTART_FILE" << AUTOEOF
 # PipeWire
 pipewire &
 pipewire-pulse &
@@ -481,24 +484,21 @@ wireplumber &
 # Polkit
 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 
-# Compositor
-picom --daemon &
+# Compositor (aguarda um momento para estabilizar)
+sleep 0.5 && picom --daemon &
 
 # Barra
-$HOME/.config/polybar/launch.sh &
+sleep 0.8 && ${POLYBAR_LAUNCH} &
 
-# Dock
-plank &
+# Dock (aguarda compositor)
+sleep 1.0 && plank &
 
 # Notificações
 dunst &
 
 # Papel de parede
 nitrogen --restore &
-
-# XDG autostart
-dex --autostart --environment Openbox
-EOF
+AUTOEOF
 
 # Adicionar keybinds ao rc.xml via python (evita problemas de escaping)
 if ! grep -q "rofi" "$HOME/.config/openbox/rc.xml"; then
@@ -510,17 +510,20 @@ with open(path) as f:
     c = f.read()
 kb = """
     <!-- Keybinds customizados -->
-    <keybind key="super">
+    <keybind key="W-space">
       <action name="Execute"><execute>rofi -show drun</execute></action>
     </keybind>
-    <keybind key="super+t">
+    <keybind key="W-t">
       <action name="Execute"><execute>kitty</execute></action>
     </keybind>
-    <keybind key="super+e">
+    <keybind key="W-e">
       <action name="Execute"><execute>thunar</execute></action>
     </keybind>
-    <keybind key="super+l">
+    <keybind key="W-l">
       <action name="Execute"><execute>rofi -show window</execute></action>
+    </keybind>
+    <keybind key="W-d">
+      <action name="Execute"><execute>rofi -show drun</execute></action>
     </keybind>
 </keyboard>"""
 c = c.replace('</keyboard>', kb, 1)
@@ -798,13 +801,16 @@ cat > "$HOME/.xinitrc" << 'EOF'
 export GTK_THEME=catppuccin-mocha-standard-mauve-dark
 export QT_QPA_PLATFORMTHEME=qt5ct
 export QT_AUTO_SCREEN_SCALE_FACTOR=0
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=openbox
 
 # XDG dirs
 xdg-user-dirs-update &
 
 # Configurações de teclado (ajuste o layout se necessário)
-setxkbmap -layout br &
+setxkbmap -layout br
 
+# Iniciar Openbox (autostart roda automaticamente pelo openbox-session)
 exec openbox-session
 EOF
 
@@ -842,14 +848,18 @@ cat << 'EOF'
   ║    startx                                    ║
   ║                                              ║
   ║  Atalhos configurados:                       ║
-  ║    Super       → Rofi (launcher)             ║
-  ║    Super + T   → Kitty (terminal)            ║
-  ║    Super + E   → Thunar (arquivos)           ║
-  ║    Super + L   → Rofi (window switcher)      ║
+  ║    Super + Space → Rofi (launcher)           ║
+  ║    Super + D     → Rofi (launcher)           ║
+  ║    Super + T     → Kitty (terminal)          ║
+  ║    Super + E     → Thunar (arquivos)         ║
+  ║    Super + L     → Rofi (window switcher)    ║
   ║                                              ║
   ║  Wallpaper: coloque wallpaper.jpg ou         ║
   ║  wallpaper.png na pasta do repositório       ║
   ║  antes de executar o script.                 ║
+  ║                                              ║
+  ║  Se algo não carregar, clique com botão      ║
+  ║  direito no desktop → Reconfigure           ║
   ║                                              ║
   ╚══════════════════════════════════════════════╝
 EOF
