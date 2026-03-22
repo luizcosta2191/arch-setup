@@ -547,6 +547,26 @@ esac
 PWEOF
 chmod +x "$HOME/.config/polybar/scripts/powermenu.sh"
 
+# ── Script para renomear desktops ─────────────────────────────────────────────
+cat > "$HOME/.config/polybar/scripts/rename-desktops.sh" << 'RENEOF'
+#!/bin/bash
+# Força os nomes dos desktops via xprop, necessário pois o Openbox usa
+# o locale do sistema (PT-BR) para nomear por padrão
+python3 - << 'PYEOF'
+import subprocess
+names = ["●", "●", "●", "●"]
+# _NET_DESKTOP_NAMES é uma lista de strings null-terminated em UTF-8
+data = " ".join(names) + " "
+encoded = ",".join(str(b) for b in data.encode('utf-8'))
+subprocess.run([
+    "xprop", "-root",
+    "-f", "_NET_DESKTOP_NAMES", "8u",
+    "-set", "_NET_DESKTOP_NAMES", data
+], check=False)
+PYEOF
+RENEOF
+chmod +x "$HOME/.config/polybar/scripts/rename-desktops.sh"
+
 # ── launch.sh ────────────────────────────────────────────────────────────────
 cat > "$HOME/.config/polybar/launch.sh" << 'LAUNCHEOF'
 #!/bin/bash
@@ -637,6 +657,9 @@ dunst &
 
 # Papel de parede
 nitrogen --restore &
+
+# Forçar nomes dos desktops via script (sobrescreve o padrão em PT-BR do sistema)
+sleep 1.5 && $HOME/.config/polybar/scripts/rename-desktops.sh &
 AUTOEOF
 
 # Inserir keybinds no rc.xml via python
