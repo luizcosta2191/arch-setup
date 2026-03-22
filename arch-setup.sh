@@ -1188,30 +1188,31 @@ ExecStart=-/usr/bin/agetty --autologin ${CURRENT_USER} --noclear %I \$TERM
 Type=idle
 AUTOEOF
 
-# 2. Adicionar startx automático — cobre bash, zsh e sh
-STARTX_SNIPPET='
+# 2. Reescrever .bash_profile com startx ANTES do .bashrc
+# O .bashrc do Arch tem um 'return' para shells não-interativos
+# que aborta a execução — o startx precisa vir antes
+cat > "$HOME/.bash_profile" << 'BASHEOF'
+#
+# ~/.bash_profile
+#
+
+# Iniciar Openbox automaticamente ao logar no tty1
+# IMPORTANTE: deve ficar antes de carregar o .bashrc
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx
+fi
+
+# Carregar .bashrc se existir
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+BASHEOF
+
+# Fazer o mesmo para zsh
+cat > "$HOME/.zprofile" << 'ZSHEOF'
 # Iniciar Openbox automaticamente ao logar no tty1
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
     exec startx
-fi'
-
-for PROFILE in "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zprofile"; do
-    if ! grep -q "exec startx" "$PROFILE" 2>/dev/null; then
-        echo "$STARTX_SNIPPET" >> "$PROFILE"
-        log "startx automático adicionado em: $PROFILE"
-    fi
-done
-
-# 3. Garantir que .bashrc carrega .bash_profile (alguns setups do Arch não fazem isso)
-if ! grep -q "bash_profile" "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" << 'RCEOF'
-
-# Carregar .bash_profile se existir e estiver no tty
-if [ -f "$HOME/.bash_profile" ] && [ -z "$DISPLAY" ]; then
-    source "$HOME/.bash_profile"
 fi
-RCEOF
-fi
+ZSHEOF
 
 sudo systemctl daemon-reload
 log "Login automático configurado — ao reiniciar entrará direto no desktop"
