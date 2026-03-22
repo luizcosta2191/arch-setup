@@ -388,24 +388,28 @@ content-padding    = 1
 click-left         = rofi -show drun
 
 [module/xworkspaces]
-type                     = internal/xworkspaces
-pin-workspaces           = false
-show-urgent              = true
+type                      = internal/xworkspaces
+pin-workspaces            = false
+show-urgent               = true
 
-label-active             = " %name% "
-label-active-foreground  = ${colors.crust}
-label-active-background  = ${colors.mauve}
+label-active              = "%name%"
+label-active-foreground   = ${colors.crust}
+label-active-background   = ${colors.mauve}
+label-active-padding      = 1
 
-label-occupied           = " %name% "
+label-occupied            = "%name%"
 label-occupied-foreground = ${colors.text}
 label-occupied-background = ${colors.surface0}
+label-occupied-padding    = 1
 
-label-urgent             = " %name% "
-label-urgent-foreground  = ${colors.crust}
-label-urgent-background  = ${colors.red}
+label-urgent              = "%name%"
+label-urgent-foreground   = ${colors.crust}
+label-urgent-background   = ${colors.red}
+label-urgent-padding      = 1
 
-label-empty              = " %name% "
-label-empty-foreground   = ${colors.surface2}
+label-empty               = "%name%"
+label-empty-foreground    = ${colors.surface2}
+label-empty-padding       = 1
 
 [module/xwindow]
 type                   = internal/xwindow
@@ -565,10 +569,10 @@ desktops = (
     "    <number>4</number>\n"
     "    <firstdesk>1</firstdesk>\n"
     "    <names>\n"
-    "      <name>1</name>\n"
-    "      <name>2</name>\n"
-    "      <name>3</name>\n"
-    "      <name>4</name>\n"
+    "      <name>●</name>\n"
+    "      <name>●</name>\n"
+    "      <name>●</name>\n"
+    "      <name>●</name>\n"
     "    </names>\n"
     "    <popupTime>875</popupTime>\n"
     "  </desktops>"
