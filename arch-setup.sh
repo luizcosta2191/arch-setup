@@ -226,14 +226,23 @@ log "Aplicativos AUR instalados"
 # ------------------------------------------------------------------------------
 section "Configurando tema Catppuccin para Rofi"
 
-mkdir -p "$HOME/.config/rofi"
+mkdir -p "$HOME/.config/rofi/themes"
 
-if [ ! -d "$HOME/.config/rofi/catppuccin" ]; then
-    git clone https://github.com/catppuccin/rofi "$HOME/.config/rofi/catppuccin"
+# Clonar tema Catppuccin para Rofi e copiar o mocha
+git clone --depth=1 https://github.com/catppuccin/rofi /tmp/catppuccin-rofi
+
+# O repo tem vários layouts — pegar o primeiro arquivo mocha encontrado
+MOCHA_FILE=$(find /tmp/catppuccin-rofi -name "*mocha*" | head -1)
+if [ -n "$MOCHA_FILE" ]; then
+    cp "$MOCHA_FILE" "$HOME/.config/rofi/themes/catppuccin-mocha.rasi"
+    log "Tema Catppuccin Mocha copiado: $MOCHA_FILE"
+else
+    warn "Arquivo mocha.rasi não encontrado — Rofi usará tema padrão"
 fi
+rm -rf /tmp/catppuccin-rofi
 
 cat > "$HOME/.config/rofi/config.rasi" << 'EOF'
-@import "catppuccin/mocha.rasi"
+@import "themes/catppuccin-mocha.rasi"
 
 configuration {
     modi:           "drun,run,window";
@@ -491,11 +500,33 @@ nitrogen --restore &
 dex --autostart --environment Openbox
 EOF
 
-# Adicionar keybinds ao rc.xml (Super para Rofi, Super+E para Thunar)
-# Insere antes de </keyboard>
+# Adicionar keybinds ao rc.xml via python (evita problemas de escaping)
 if ! grep -q "rofi" "$HOME/.config/openbox/rc.xml"; then
-    sed -i 's|</keyboard>|    <keybind key="super">\n      <action name="Execute"><command>rofi -show drun</command></action>\n    </keybind>\n    <keybind key="super+e">\n      <action name="Execute"><command>thunar</command></action>\n    </keybind>\n    <keybind key="super+t">\n      <action name="Execute"><command>kitty</command></action>\n    </keybind>\n    <keybind key="super+l">\n      <action name="Execute"><command>rofi -show window</command></action>\n    </keybind>\n</keyboard>|' \
-        "$HOME/.config/openbox/rc.xml"
+    python3 - << 'PYEOF'
+import os
+home = os.path.expanduser('~')
+path = home + '/.config/openbox/rc.xml'
+with open(path) as f:
+    c = f.read()
+kb = """
+    <!-- Keybinds customizados -->
+    <keybind key="super">
+      <action name="Execute"><execute>rofi -show drun</execute></action>
+    </keybind>
+    <keybind key="super+t">
+      <action name="Execute"><execute>kitty</execute></action>
+    </keybind>
+    <keybind key="super+e">
+      <action name="Execute"><execute>thunar</execute></action>
+    </keybind>
+    <keybind key="super+l">
+      <action name="Execute"><execute>rofi -show window</execute></action>
+    </keybind>
+</keyboard>"""
+c = c.replace('</keyboard>', kb, 1)
+with open(path, 'w') as f:
+    f.write(c)
+PYEOF
 fi
 
 log "Openbox configurado"
