@@ -482,24 +482,20 @@ type                      = internal/xworkspaces
 pin-workspaces            = false
 show-urgent               = true
 
-label-active              = "%name%"
+label-active              = " %index% "
 label-active-foreground   = ${colors.crust}
 label-active-background   = ${colors.mauve}
-label-active-padding      = 1
 
-label-occupied            = "%name%"
+label-occupied            = " %index% "
 label-occupied-foreground = ${colors.text}
 label-occupied-background = ${colors.surface0}
-label-occupied-padding    = 1
 
-label-urgent              = "%name%"
+label-urgent              = " %index% "
 label-urgent-foreground   = ${colors.crust}
 label-urgent-background   = ${colors.red}
-label-urgent-padding      = 1
 
-label-empty               = "%name%"
+label-empty               = " %index% "
 label-empty-foreground    = ${colors.surface2}
-label-empty-padding       = 1
 
 [module/xwindow]
 type                   = internal/xwindow
@@ -513,9 +509,9 @@ label-empty-foreground = ${colors.surface2}
 [module/date]
 type             = internal/date
 interval         = 1
-date             = %A, %d %b
+date             = %d/%m/%Y
 time             = %H:%M
-label            = "  %date%    %time% "
+label            = "  %date%   %time% "
 label-foreground = ${colors.text}
 
 ; ─── DIREITA ──────────────────────────────────────────────────────────────────
@@ -544,20 +540,21 @@ label-disconnected-foreground        = ${colors.red}
 click-left                           = nm-connection-editor
 
 [module/pulseaudio]
-type                    = internal/pulseaudio
-use-ui-max              = true
-interval                = 2
-format-volume           = "<ramp-volume><label-volume>"
-label-volume            = "%percentage%% "
-label-volume-foreground = ${colors.text}
-label-muted             = "  muted "
-label-muted-foreground  = ${colors.surface2}
-ramp-volume-0           = "  "
-ramp-volume-1           = "  "
-ramp-volume-2           = "  "
-ramp-volume-foreground  = ${colors.blue}
-click-right             = pavucontrol
-click-middle            = pactl set-sink-mute @DEFAULT_SINK@ toggle
+type                     = internal/pulseaudio
+use-ui-max               = true
+interval                 = 2
+format-volume            = "<label-volume>"
+format-volume-prefix     = "⏶ "
+format-volume-prefix-foreground = ${colors.blue}
+label-volume             = "%percentage%% "
+label-volume-foreground  = ${colors.text}
+format-muted             = "<label-muted>"
+format-muted-prefix      = "⏷ "
+format-muted-prefix-foreground = ${colors.surface2}
+label-muted              = "muted "
+label-muted-foreground   = ${colors.surface2}
+click-right              = pavucontrol
+click-middle             = pactl set-sink-mute @DEFAULT_SINK@ toggle
 
 [module/battery]
 type                          = internal/battery
