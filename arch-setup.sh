@@ -690,9 +690,25 @@ section "Aplicando tema GTK e ícones"
 mkdir -p "$HOME/.config/gtk-3.0"
 mkdir -p "$HOME/.config/gtk-4.0"
 
-cat > "$HOME/.config/gtk-3.0/settings.ini" << 'EOF'
+# Detectar o nome exato do tema instalado (varia por versão do pacote)
+# O pacote catppuccin-gtk-theme-mocha instala em /usr/share/themes/
+GTK_THEME_NAME=$(find /usr/share/themes -maxdepth 1 -type d -iname "catppuccin-mocha*mauve*" | head -1 | xargs basename 2>/dev/null)
+
+if [ -z "$GTK_THEME_NAME" ]; then
+    # Fallback: pegar qualquer tema mocha disponível
+    GTK_THEME_NAME=$(find /usr/share/themes -maxdepth 1 -type d -iname "catppuccin-mocha*" | head -1 | xargs basename 2>/dev/null)
+fi
+
+if [ -z "$GTK_THEME_NAME" ]; then
+    warn "Tema Catppuccin GTK não encontrado em /usr/share/themes"
+    GTK_THEME_NAME="Adwaita"
+else
+    log "Tema GTK detectado: $GTK_THEME_NAME"
+fi
+
+cat > "$HOME/.config/gtk-3.0/settings.ini" << GTKEOF
 [Settings]
-gtk-theme-name=catppuccin-mocha-standard-mauve-dark
+gtk-theme-name=$GTK_THEME_NAME
 gtk-icon-theme-name=Tela-circle-dracula
 gtk-font-name=Noto Sans 11
 gtk-cursor-theme-name=Adwaita
@@ -707,22 +723,41 @@ gtk-xft-antialias=1
 gtk-xft-hinting=1
 gtk-xft-hintstyle=hintfull
 gtk-xft-rgba=rgb
-EOF
+GTKEOF
 
 cp "$HOME/.config/gtk-3.0/settings.ini" "$HOME/.config/gtk-4.0/settings.ini"
 
-# xsettingsd para forçar tema em apps X11
-if command -v xsettingsd &>/dev/null || yay -S --noconfirm --needed xsettingsd; then
-    mkdir -p "$HOME/.config"
-    cat > "$HOME/.config/xsettingsd" << 'EOF'
-Net/ThemeName "catppuccin-mocha-standard-mauve-dark"
+# gsettings — aplica para apps GNOME/GTK sem precisar reiniciar
+if command -v gsettings &>/dev/null; then
+    gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME_NAME" 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface icon-theme "Tela-circle-dracula" 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface font-name "Noto Sans 11" 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface cursor-theme "Adwaita" 2>/dev/null || true
+    log "gsettings aplicados"
+fi
+
+# xsettingsd — aplica tema para apps X11 em tempo real
+yay -S --noconfirm --needed xsettingsd 2>/dev/null || true
+mkdir -p "$HOME/.config"
+cat > "$HOME/.config/xsettingsd" << XEOF
+Net/ThemeName "$GTK_THEME_NAME"
 Net/IconThemeName "Tela-circle-dracula"
 Gtk/FontName "Noto Sans 11"
 Gtk/CursorThemeName "Adwaita"
-EOF
+Xft/Antialias 1
+Xft/Hinting 1
+Xft/HintStyle "hintfull"
+Xft/RGBA "rgb"
+XEOF
+
+# Adicionar xsettingsd ao autostart do Openbox
+if ! grep -q "xsettingsd" "$HOME/.config/openbox/autostart"; then
+    echo "" >> "$HOME/.config/openbox/autostart"
+    echo "# Aplica tema GTK em tempo real" >> "$HOME/.config/openbox/autostart"
+    echo "xsettingsd &" >> "$HOME/.config/openbox/autostart"
 fi
 
-log "Tema GTK e ícones aplicados"
+log "Tema GTK e ícones aplicados: $GTK_THEME_NAME"
 
 # ------------------------------------------------------------------------------
 # Papel de parede
@@ -841,9 +876,14 @@ log "Plank configurado"
 # ------------------------------------------------------------------------------
 section "Configurando .xinitrc"
 
-cat > "$HOME/.xinitrc" << 'EOF'
+# .xinitrc com tema detectado dinamicamente
+GTK_THEME_XINITRC=$(find /usr/share/themes -maxdepth 1 -type d -iname "catppuccin-mocha*mauve*" | head -1 | xargs basename 2>/dev/null)
+[ -z "$GTK_THEME_XINITRC" ] && GTK_THEME_XINITRC="Adwaita"
+
+cat > "$HOME/.xinitrc" << XINITEOF
 #!/bin/bash
-export GTK_THEME=catppuccin-mocha-standard-mauve-dark
+export GTK_THEME=${GTK_THEME_XINITRC}
+export GTK2_RC_FILES=\$HOME/.gtkrc-2.0
 export QT_QPA_PLATFORMTHEME=qt5ct
 export QT_AUTO_SCREEN_SCALE_FACTOR=0
 export XDG_SESSION_TYPE=x11
@@ -852,12 +892,21 @@ export XDG_CURRENT_DESKTOP=openbox
 # XDG dirs
 xdg-user-dirs-update &
 
-# Configurações de teclado (ajuste o layout se necessário)
+# Configurações de teclado
 setxkbmap -layout br
 
-# Iniciar Openbox (autostart roda automaticamente pelo openbox-session)
+# Iniciar Openbox
 exec openbox-session
-EOF
+XINITEOF
+
+# Criar .gtkrc-2.0 para apps GTK2 legados
+cat > "$HOME/.gtkrc-2.0" << GTKEOF2
+gtk-theme-name="${GTK_THEME_XINITRC}"
+gtk-icon-theme-name="Tela-circle-dracula"
+gtk-font-name="Noto Sans 11"
+gtk-cursor-theme-name="Adwaita"
+gtk-cursor-theme-size=24
+GTKEOF2
 
 log ".xinitrc configurado"
 
