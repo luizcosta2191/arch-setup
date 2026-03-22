@@ -312,150 +312,288 @@ EOF
 
 log "Kitty configurado"
 
+
 # ------------------------------------------------------------------------------
 # Polybar — Catppuccin Mocha
 # ------------------------------------------------------------------------------
 section "Configurando Polybar"
 
-mkdir -p "$HOME/.config/polybar"
+sudo pacman -S --noconfirm --needed wmctrl bluez bluez-utils
+yay -S --noconfirm --needed blueman network-manager-applet 2>/dev/null || true
 
-cat > "$HOME/.config/polybar/config.ini" << 'EOF'
+mkdir -p "$HOME/.config/polybar"
+mkdir -p "$HOME/.config/polybar/scripts"
+
+# ── config.ini ────────────────────────────────────────────────────────────────
+cat > "$HOME/.config/polybar/config.ini" << 'POLYEOF'
 [colors]
-base     = #1e1e2e
-mantle   = #181825
-crust    = #11111b
-text     = #cdd6f4
-subtext1 = #bac2de
-subtext0 = #a6adc8
-surface2 = #585b70
-surface1 = #45475a
-surface0 = #313244
-blue     = #89b4fa
-lavender = #b4befe
-sapphire = #74c7ec
-sky      = #89dceb
-teal     = #94e2d5
-green    = #a6e3a1
-yellow   = #f9e2af
-peach    = #fab387
-maroon   = #eba0ac
-red      = #f38ba8
-mauve    = #cba6f7
-pink     = #f5c2e7
-flamingo = #f2cdcd
-rosewater= #f5e0dc
+base      = #1e1e2e
+mantle    = #181825
+crust     = #11111b
+text      = #cdd6f4
+subtext1  = #bac2de
+subtext0  = #a6adc8
+surface2  = #585b70
+surface1  = #45475a
+surface0  = #313244
+blue      = #89b4fa
+lavender  = #b4befe
+sapphire  = #74c7ec
+sky       = #89dceb
+teal      = #94e2d5
+green     = #a6e3a1
+yellow    = #f9e2af
+peach     = #fab387
+maroon    = #eba0ac
+red       = #f38ba8
+mauve     = #cba6f7
+pink      = #f5c2e7
+flamingo  = #f2cdcd
+rosewater = #f5e0dc
 
 [bar/main]
-width            = 100%
-height           = 30
-radius           = 0
-background       = ${colors.mantle}
-foreground       = ${colors.text}
-line-size        = 2
-padding-left     = 1
-padding-right    = 2
-module-margin    = 1
-separator        = 
-font-0           = JetBrainsMono Nerd Font:size=10:weight=bold;2
-font-1           = JetBrainsMono Nerd Font:size=14;3
-modules-left     = openbox-menu workspaces xwindow
-modules-center   = date
-modules-right    = pulseaudio network battery tray
-wm-restack       = openbox
-override-redirect= true
-bottom           = false
-cursor-click     = pointer
-cursor-scroll    = ns-resize
-tray-position    = right
-tray-padding     = 4
+width               = 100%
+height              = 32
+radius              = 0
+background          = ${colors.mantle}
+foreground          = ${colors.text}
+line-size           = 2
+padding-left        = 2
+padding-right       = 2
+module-margin-left  = 1
+module-margin-right = 1
+; aspas são obrigatórias em fontes com espaço no nome
+font-0              = "JetBrainsMono Nerd Font:size=10:weight=bold;3"
+font-1              = "JetBrainsMono Nerd Font:size=13;4"
+modules-left        = openbox-menu xworkspaces xwindow
+modules-center      = date
+modules-right       = bluetooth network pulseaudio battery powermenu tray
+wm-restack          = openbox
+override-redirect   = true
+bottom              = false
+cursor-click        = pointer
+cursor-scroll       = ns-resize
+tray-position       = right
+tray-padding        = 4
+tray-background     = ${colors.mantle}
+
+; ─── ESQUERDA ─────────────────────────────────────────────────────────────────
 
 [module/openbox-menu]
-type             = custom/text
-content          =  Menu
+type               = custom/text
+content            = "  Menu "
 content-foreground = ${colors.mauve}
-content-padding  = 1
-click-left       = rofi -show drun
+content-background = ${colors.surface0}
+content-padding    = 1
+click-left         = rofi -show drun
 
-[module/workspaces]
-type             = custom/script
-exec             = echo ""
-interval         = 1
+[module/xworkspaces]
+type                     = internal/xworkspaces
+pin-workspaces           = false
+show-urgent              = true
+
+label-active             = " %name% "
+label-active-foreground  = ${colors.crust}
+label-active-background  = ${colors.mauve}
+
+label-occupied           = " %name% "
+label-occupied-foreground = ${colors.text}
+label-occupied-background = ${colors.surface0}
+
+label-urgent             = " %name% "
+label-urgent-foreground  = ${colors.crust}
+label-urgent-background  = ${colors.red}
+
+label-empty              = " %name% "
+label-empty-foreground   = ${colors.surface2}
 
 [module/xwindow]
-type             = internal/xwindow
-label            = %title:0:60:...%
-label-foreground = ${colors.subtext1}
+type                   = internal/xwindow
+label                  = "  %title:0:50:...% "
+label-foreground       = ${colors.subtext1}
+label-empty            = "  Desktop "
+label-empty-foreground = ${colors.surface2}
+
+; ─── CENTRO ───────────────────────────────────────────────────────────────────
 
 [module/date]
 type             = internal/date
 interval         = 1
 date             = %A, %d %b
 time             = %H:%M
-label            =  %date%   %time%
+label            = "  %date%    %time% "
 label-foreground = ${colors.text}
 
-[module/pulseaudio]
-type             = internal/pulseaudio
-format-volume    = <ramp-volume> <label-volume>
-label-volume     = %percentage%%
-label-volume-foreground = ${colors.text}
-label-muted      =  muted
-label-muted-foreground  = ${colors.surface2}
-ramp-volume-0    = 
-ramp-volume-1    = 
-ramp-volume-2    = 
-ramp-volume-foreground  = ${colors.blue}
-click-right      = pavucontrol
+; ─── DIREITA ──────────────────────────────────────────────────────────────────
+
+[module/bluetooth]
+type              = custom/script
+exec              = ~/.config/polybar/scripts/bluetooth.sh
+interval          = 3
+click-left        = blueman-manager
+format-foreground = ${colors.sapphire}
 
 [module/network]
-type             = internal/network
-interface-type   = wireless
-interval         = 3
-format-connected =  <label-connected>
-label-connected  = %essid%
-label-connected-foreground = ${colors.green}
-format-disconnected =  offline
-label-disconnected-foreground = ${colors.red}
+type                                 = internal/network
+interface-type                       = wireless
+interval                             = 3
+format-connected                     = "<label-connected>"
+format-connected-prefix              = "  "
+format-connected-prefix-foreground   = ${colors.green}
+label-connected                      = "%essid% "
+label-connected-foreground           = ${colors.green}
+format-disconnected                  = "<label-disconnected>"
+format-disconnected-prefix           = "  "
+format-disconnected-prefix-foreground = ${colors.red}
+label-disconnected                   = "offline "
+label-disconnected-foreground        = ${colors.red}
+click-left                           = nm-connection-editor
+
+[module/pulseaudio]
+type                    = internal/pulseaudio
+use-ui-max              = true
+interval                = 2
+format-volume           = "<ramp-volume><label-volume>"
+label-volume            = "%percentage%% "
+label-volume-foreground = ${colors.text}
+label-muted             = "  muted "
+label-muted-foreground  = ${colors.surface2}
+ramp-volume-0           = "  "
+ramp-volume-1           = "  "
+ramp-volume-2           = "  "
+ramp-volume-foreground  = ${colors.blue}
+click-right             = pavucontrol
+click-middle            = pactl set-sink-mute @DEFAULT_SINK@ toggle
 
 [module/battery]
-type             = internal/battery
-battery          = BAT0
-adapter          = AC
-full-at          = 99
-format-charging  = <animation-charging> <label-charging>
-format-discharging = <ramp-capacity> <label-discharging>
-format-full      =  <label-full>
-label-charging-foreground   = ${colors.yellow}
-label-discharging-foreground= ${colors.text}
-label-full-foreground       = ${colors.green}
-ramp-capacity-0  = 
-ramp-capacity-1  = 
-ramp-capacity-2  = 
-ramp-capacity-3  = 
-ramp-capacity-4  = 
-ramp-capacity-foreground = ${colors.peach}
-animation-charging-0 = 
-animation-charging-1 = 
-animation-charging-2 = 
-animation-charging-3 = 
-animation-charging-4 = 
+type                          = internal/battery
+battery                       = BAT0
+adapter                       = AC
+full-at                       = 99
+poll-interval                 = 5
+format-charging               = "<animation-charging><label-charging>"
+format-discharging            = "<ramp-capacity><label-discharging>"
+format-full                   = "  <label-full>"
+format-full-foreground        = ${colors.green}
+label-charging                = "%percentage%% "
+label-charging-foreground     = ${colors.yellow}
+label-discharging             = "%percentage%% "
+label-discharging-foreground  = ${colors.text}
+label-full                    = "Full "
+ramp-capacity-0               = "  "
+ramp-capacity-1               = "  "
+ramp-capacity-2               = "  "
+ramp-capacity-3               = "  "
+ramp-capacity-4               = "  "
+ramp-capacity-foreground      = ${colors.peach}
+animation-charging-0          = "  "
+animation-charging-1          = "  "
+animation-charging-2          = "  "
+animation-charging-3          = "  "
+animation-charging-4          = "  "
 animation-charging-foreground = ${colors.yellow}
 animation-charging-framerate  = 750
 
-[module/tray]
-type             = internal/tray
-tray-size        = 16
-tray-padding     = 4
-EOF
+[module/powermenu]
+type               = custom/text
+content            = "  "
+content-foreground = ${colors.red}
+content-padding    = 1
+click-left         = ~/.config/polybar/scripts/powermenu.sh
 
-cat > "$HOME/.config/polybar/launch.sh" << 'EOF'
+[module/tray]
+type            = internal/tray
+tray-size       = 16
+tray-padding    = 4
+tray-background = ${colors.mantle}
+POLYEOF
+
+# ── Script bluetooth ──────────────────────────────────────────────────────────
+cat > "$HOME/.config/polybar/scripts/bluetooth.sh" << 'BTEOF'
+#!/bin/bash
+BT_STATUS=$(bluetoothctl show 2>/dev/null | grep "Powered" | awk '{print $2}')
+if [ "$BT_STATUS" = "yes" ]; then
+    CONNECTED=$(bluetoothctl devices Connected 2>/dev/null | head -1 | cut -d' ' -f3-)
+    if [ -n "$CONNECTED" ]; then
+        echo "  $CONNECTED"
+    else
+        echo "  on"
+    fi
+else
+    echo "  off"
+fi
+BTEOF
+chmod +x "$HOME/.config/polybar/scripts/bluetooth.sh"
+
+# ── Script power menu ─────────────────────────────────────────────────────────
+cat > "$HOME/.config/polybar/scripts/powermenu.sh" << 'PWEOF'
+#!/bin/bash
+OPTS="  Desligar\n  Reiniciar\n  Encerrar sessão\n  Suspender"
+CHOICE=$(echo -e "$OPTS" | rofi -dmenu -p "  Sistema" \
+    -theme-str 'window { width: 240px; border-radius: 12px; }' \
+    -theme-str 'listview { lines: 4; }' \
+    -theme-str 'element { border-radius: 8px; }')
+
+case "$CHOICE" in
+    *"Desligar"*)        systemctl poweroff ;;
+    *"Reiniciar"*)       systemctl reboot ;;
+    *"Encerrar sessão"*) openbox --exit ;;
+    *"Suspender"*)       systemctl suspend ;;
+esac
+PWEOF
+chmod +x "$HOME/.config/polybar/scripts/powermenu.sh"
+
+# ── launch.sh ────────────────────────────────────────────────────────────────
+cat > "$HOME/.config/polybar/launch.sh" << 'LAUNCHEOF'
 #!/bin/bash
 killall -q polybar
 while pgrep -u $UID -x polybar > /dev/null; do sleep 0.5; done
 polybar main 2>&1 | tee -a /tmp/polybar.log & disown
-EOF
-
+LAUNCHEOF
 chmod +x "$HOME/.config/polybar/launch.sh"
+
+# ── Openbox: 4 desktops + keybinds de workspace ───────────────────────────────
+python3 - << 'PYEOF'
+import os, re
+home = os.path.expanduser('~')
+path = home + '/.config/openbox/rc.xml'
+with open(path) as f:
+    c = f.read()
+
+desktops = (
+    "<desktops>\n"
+    "    <number>4</number>\n"
+    "    <firstdesk>1</firstdesk>\n"
+    "    <names>\n"
+    "      <name>1</name>\n"
+    "      <name>2</name>\n"
+    "      <name>3</name>\n"
+    "      <name>4</name>\n"
+    "    </names>\n"
+    "    <popupTime>875</popupTime>\n"
+    "  </desktops>"
+)
+c = re.sub(r'<desktops>.*?</desktops>', desktops, c, flags=re.DOTALL)
+
+if 'GoToDesktop' not in c:
+    ws = (
+        "\n    <!-- Workspaces -->\n"
+        "    <keybind key=\"W-1\"><action name=\"GoToDesktop\"><to>1</to></action></keybind>\n"
+        "    <keybind key=\"W-2\"><action name=\"GoToDesktop\"><to>2</to></action></keybind>\n"
+        "    <keybind key=\"W-3\"><action name=\"GoToDesktop\"><to>3</to></action></keybind>\n"
+        "    <keybind key=\"W-4\"><action name=\"GoToDesktop\"><to>4</to></action></keybind>\n"
+        "    <keybind key=\"W-S-1\"><action name=\"SendToDesktop\"><to>1</to></action></keybind>\n"
+        "    <keybind key=\"W-S-2\"><action name=\"SendToDesktop\"><to>2</to></action></keybind>\n"
+        "    <keybind key=\"W-S-3\"><action name=\"SendToDesktop\"><to>3</to></action></keybind>\n"
+        "    <keybind key=\"W-S-4\"><action name=\"SendToDesktop\"><to>4</to></action></keybind>\n"
+    )
+    c = c.replace('</keyboard>', ws + '</keyboard>', 1)
+
+with open(path, 'w') as f:
+    f.write(c)
+print("Openbox desktops e keybinds configurados")
+PYEOF
+
 log "Polybar configurado"
 
 # ------------------------------------------------------------------------------
