@@ -218,7 +218,7 @@ yay -S --noconfirm --needed \
     visual-studio-code-bin \
     catppuccin-gtk-theme-mocha \
     tela-circle-icon-theme-dracula-git \
-    bamf
+    catppuccin-mocha-openbox-theme-git
 
 log "Aplicativos AUR instalados"
 
@@ -246,29 +246,19 @@ cat > "$HOME/.config/rofi/config.rasi" << 'EOF'
 @import "themes/catppuccin-mocha.rasi"
 
 configuration {
-    modi:                   "drun,run,window";
-    show-icons:             true;
-    icon-theme:             "Tela-circle-dracula";
-    drun-display-format:    "{name}";
-    display-drun:           "Apps";
-    display-run:            "Run";
-    display-window:         "Windows";
-
-    /* Garante foco de teclado ao abrir */
-    steal-focus:            true;
-    /* Navegação */
-    kb-accept-entry:        "Return,KP_Enter";
-    kb-row-down:            "Down,Control+n,Tab";
-    kb-row-up:              "Up,Control+p,ISO_Left_Tab";
-    kb-cancel:              "Escape,Control+g,Control+bracketleft";
-    kb-remove-char-back:    "BackSpace";
+    modi:                "drun,run,window";
+    show-icons:          true;
+    icon-theme:          "Tela-circle-dracula";
+    drun-display-format: "{name}";
+    display-drun:        "Apps";
+    display-run:         "Run";
+    display-window:      "Windows";
+    /* Sem keybindings customizados — usa padrões do Rofi para evitar conflitos */
 }
 
 window {
-    width:          520px;
-    border-radius:  12px;
-    /* Força janela no topo */
-    fullscreen:     false;
+    width:         520px;
+    border-radius: 12px;
 }
 
 element {
@@ -497,11 +487,8 @@ sleep 0.5 && picom --daemon &
 # Barra
 sleep 0.8 && ${POLYBAR_LAUNCH} &
 
-# Bamf (necessário para o Plank associar janelas)
-sleep 0.8 && /usr/lib/bamf/bamfdaemon &
-
 # Dock
-sleep 1.4 && plank &
+sleep 1.2 && plank &
 
 # Notificações
 dunst &
@@ -527,12 +514,12 @@ kb = """
     <!-- Keybinds customizados -->
     <keybind key="W-space">
       <action name="Execute">
-        <command>rofi -show drun -kb-accept-entry Return -kb-row-down Down -kb-row-up Up</command>
+        <command>rofi -show drun</command>
       </action>
     </keybind>
     <keybind key="W-d">
       <action name="Execute">
-        <command>rofi -show drun -kb-accept-entry Return -kb-row-down Down -kb-row-up Up</command>
+        <command>rofi -show drun</command>
       </action>
     </keybind>
     <keybind key="W-t">
@@ -561,6 +548,20 @@ with open(path, 'w') as f:
 print("rc.xml keybinds configurados")
 PYEOF
 
+# Aplicar tema de decoração de janelas Catppuccin no rc.xml
+python3 - << 'PYEOF2'
+import os, re
+home = os.path.expanduser('~')
+path = home + '/.config/openbox/rc.xml'
+with open(path) as f:
+    c = f.read()
+# Substituir o nome do tema na seção <theme>
+c = re.sub(r'<name>.*?</name>', '<name>Catppuccin-Mocha</name>', c, count=1)
+with open(path, 'w') as f:
+    f.write(c)
+print("Tema de janela Catppuccin aplicado no rc.xml")
+PYEOF2
+
 log "Openbox configurado"
 
 # ------------------------------------------------------------------------------
@@ -571,40 +572,38 @@ section "Configurando Picom"
 mkdir -p "$HOME/.config/picom"
 
 cat > "$HOME/.config/picom/picom.conf" << 'EOF'
+# Backend — xrender é mais compatível e não causa janela fantasma
+backend = "xrender";
+vsync = false;
+
 # Sombras
 shadow = true;
-shadow-radius = 12;
-shadow-opacity = 0.5;
-shadow-offset-x = -12;
-shadow-offset-y = -12;
+shadow-radius = 10;
+shadow-opacity = 0.4;
+shadow-offset-x = -10;
+shadow-offset-y = -10;
 shadow-exclude = [
     "name = 'Notification'",
     "class_g = 'Plank'",
-    "class_g = 'Polybar'"
+    "class_g = 'Polybar'",
+    "_GTK_FRAME_EXTENTS@:c"
 ];
 
-# Fade
+# Fade suave
 faded = true;
-fade-in-step = 0.05;
-fade-out-step = 0.05;
-fade-exclude = [];
+fade-in-step = 0.08;
+fade-out-step = 0.08;
 
-# Transparência
-inactive-opacity = 0.95;
+# Transparência apenas para o terminal
+inactive-opacity = 1.0;
 active-opacity = 1.0;
-frame-opacity = 1.0;
-inactive-opacity-override = false;
 opacity-rule = [
-    "95:class_g = 'kitty'"
+    "95:class_g = 'kitty' && focused",
+    "90:class_g = 'kitty' && !focused"
 ];
-
-# Backend
-backend = "glx";
-vsync = true;
-glx-no-stutter = true;
 
 # Rounded corners
-corner-radius = 10;
+corner-radius = 8;
 rounded-corners-exclude = [
     "class_g = 'Polybar'",
     "class_g = 'Plank'"
