@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Adicionar em todos os arquivos de perfil possíveis
 for f in ~/.bash_profile ~/.profile ~/.zprofile; do
     if ! grep -q "exec startx" "$f" 2>/dev/null; then
