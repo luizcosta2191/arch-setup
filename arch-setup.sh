@@ -121,13 +121,11 @@ section "Instalando ambiente desktop"
 
 sudo pacman -S --noconfirm --needed \
     openbox \
-    openbox-themes \
     obconf-qt \
     python-pyxdg \
     polybar \
     rofi \
     kitty \
-    nitrogen \
     thunar \
     thunar-archive-plugin \
     thunar-volman \
@@ -144,6 +142,9 @@ sudo pacman -S --noconfirm --needed \
     ttf-jetbrains-mono-nerd \
     noto-fonts \
     noto-fonts-emoji
+
+# nitrogen não está no pacman oficial — instalar via AUR
+yay -S --noconfirm --needed nitrogen
 
 log "Ambiente desktop instalado"
 
