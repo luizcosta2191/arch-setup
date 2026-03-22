@@ -1172,6 +1172,61 @@ xdg-user-dirs-update
 log "Diretórios XDG criados"
 
 # ------------------------------------------------------------------------------
+# SDDM — display manager com tema Catppuccin
+# ------------------------------------------------------------------------------
+section "Instalando SDDM (display manager)"
+
+sudo pacman -S --noconfirm --needed sddm qt5-quickcontrols2 qt5-graphicaleffects
+yay -S --noconfirm --needed sddm-catppuccin-git 2>/dev/null ||     yay -S --noconfirm --needed catppuccin-sddm-theme-mocha 2>/dev/null ||     warn "Tema SDDM Catppuccin não encontrado no AUR — SDDM será instalado com tema padrão"
+
+# Criar arquivo de sessão para o Openbox
+sudo mkdir -p /usr/share/xsessions
+sudo tee /usr/share/xsessions/openbox.desktop > /dev/null << 'SESSEOF'
+[Desktop Entry]
+Name=Openbox
+Comment=Log in using the Openbox window manager
+Exec=/usr/bin/openbox-session
+TryExec=/usr/bin/openbox-session
+Icon=openbox
+Type=Application
+SESSEOF
+
+# Detectar tema instalado
+SDDM_THEME=$(find /usr/share/sddm/themes -maxdepth 1 -type d -iname "*catppuccin*mocha*"     -o -type d -iname "*mocha*" 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+
+sudo mkdir -p /etc/sddm.conf.d
+
+if [ -n "$SDDM_THEME" ]; then
+    sudo tee /etc/sddm.conf.d/theme.conf > /dev/null << SDDMEOF
+[Theme]
+Current=${SDDM_THEME}
+SDDMEOF
+    log "SDDM tema: $SDDM_THEME"
+else
+    warn "Nenhum tema Catppuccin encontrado — usando tema padrão do SDDM"
+fi
+
+# Configurações gerais do SDDM
+sudo tee /etc/sddm.conf.d/general.conf > /dev/null << 'SDDMEOF'
+[General]
+DisplayServer=x11
+HaltCommand=/usr/bin/systemctl poweroff
+RebootCommand=/usr/bin/systemctl reboot
+
+[Autologin]
+# Descomente e preencha para login automático:
+# User=seu_usuario
+# Session=openbox
+
+[Users]
+MaximumUid=60513
+MinimumUid=1000
+SDDMEOF
+
+sudo systemctl enable sddm
+log "SDDM instalado e habilitado"
+
+# ------------------------------------------------------------------------------
 # Habilitar serviços
 # ------------------------------------------------------------------------------
 section "Habilitando serviços"
