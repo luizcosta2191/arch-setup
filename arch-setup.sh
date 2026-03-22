@@ -141,7 +141,11 @@ sudo pacman -S --noconfirm --needed \
     wmctrl \
     ttf-jetbrains-mono-nerd \
     noto-fonts \
-    noto-fonts-emoji
+    noto-fonts-emoji \
+    ttf-nerd-fonts-symbols \
+    ttf-nerd-fonts-symbols-mono \
+
+fc-cache -fv
 
 # nitrogen não está no pacman oficial — instalar via AUR
 yay -S --noconfirm --needed nitrogen
@@ -242,27 +246,111 @@ else
 fi
 rm -rf /tmp/catppuccin-rofi
 
+# Rofi config — cores Catppuccin Mocha embutidas diretamente
+# (não depende de @import externo que pode não existir)
+cat > "$HOME/.config/rofi/catppuccin-mocha.rasi" << 'RASIEOF'
+* {
+    bg0:     #1e1e2e;
+    bg1:     #181825;
+    bg2:     #313244;
+    bg3:     #45475a;
+    fg0:     #cdd6f4;
+    fg1:     #bac2de;
+    fg2:     #a6adc8;
+    accent:  #cba6f7;
+    urgent:  #f38ba8;
+    green:   #a6e3a1;
+
+    background-color:   @bg0;
+    text-color:         @fg0;
+    border-color:       @accent;
+}
+
+window {
+    background-color: @bg0;
+    border:           2px;
+    border-color:     @accent;
+    border-radius:    12px;
+    width:            520px;
+    padding:          0;
+}
+
+mainbox {
+    background-color: @bg0;
+    children:         [ inputbar, listview ];
+    spacing:          0;
+    padding:          8px;
+}
+
+inputbar {
+    background-color: @bg1;
+    border-radius:    8px;
+    padding:          10px 14px;
+    margin:           0 0 8px 0;
+    children:         [ prompt, entry ];
+    spacing:          8px;
+}
+
+prompt {
+    background-color: transparent;
+    text-color:       @accent;
+    font:             "JetBrainsMono Nerd Font Bold 10";
+}
+
+entry {
+    background-color: transparent;
+    text-color:       @fg0;
+    placeholder:      "Buscar apps...";
+    placeholder-color: @fg2;
+    font:             "JetBrainsMono Nerd Font 10";
+}
+
+listview {
+    background-color: transparent;
+    lines:            8;
+    columns:          1;
+    spacing:          4px;
+    scrollbar:        false;
+}
+
+element {
+    background-color: transparent;
+    border-radius:    8px;
+    padding:          8px 12px;
+    spacing:          10px;
+    orientation:      horizontal;
+    children:         [ element-icon, element-text ];
+}
+
+element selected {
+    background-color: @accent;
+    text-color:       @bg0;
+}
+
+element-icon {
+    size:             24px;
+    background-color: transparent;
+}
+
+element-text {
+    background-color: transparent;
+    text-color:       inherit;
+    font:             "JetBrainsMono Nerd Font 10";
+    vertical-align:   0.5;
+}
+RASIEOF
+
 cat > "$HOME/.config/rofi/config.rasi" << 'EOF'
-@import "themes/catppuccin-mocha.rasi"
+@import "catppuccin-mocha.rasi"
 
 configuration {
     modi:                "drun,run,window";
     show-icons:          true;
     icon-theme:          "Tela-circle-dracula";
     drun-display-format: "{name}";
-    display-drun:        "Apps";
-    display-run:         "Run";
-    display-window:      "Windows";
-    /* Sem keybindings customizados — usa padrões do Rofi para evitar conflitos */
-}
-
-window {
-    width:         520px;
-    border-radius: 12px;
-}
-
-element {
-    border-radius: 8px;
+    display-drun:        "  Apps";
+    display-run:         "  Run";
+    display-window:      "  Windows";
 }
 EOF
 
@@ -365,6 +453,8 @@ module-margin-right = 1
 ; aspas são obrigatórias em fontes com espaço no nome
 font-0              = "JetBrainsMono Nerd Font:size=10:weight=bold;3"
 font-1              = "JetBrainsMono Nerd Font:size=13;4"
+font-2              = "Symbols Nerd Font:size=12;3"
+font-3              = "Noto Color Emoji:scale=10;2"
 modules-left        = openbox-menu xworkspaces xwindow
 modules-center      = date
 modules-right       = bluetooth network pulseaudio battery powermenu tray
@@ -500,7 +590,7 @@ animation-charging-framerate  = 750
 
 [module/powermenu]
 type               = custom/text
-content            = "  "
+content            = " ⏻ "
 content-foreground = ${colors.red}
 content-padding    = 1
 click-left         = ~/.config/polybar/scripts/powermenu.sh
@@ -532,16 +622,18 @@ chmod +x "$HOME/.config/polybar/scripts/bluetooth.sh"
 # ── Script power menu ─────────────────────────────────────────────────────────
 cat > "$HOME/.config/polybar/scripts/powermenu.sh" << 'PWEOF'
 #!/bin/bash
-OPTS="  Desligar\n  Reiniciar\n  Encerrar sessão\n  Suspender"
-CHOICE=$(echo -e "$OPTS" | rofi -dmenu -p "  Sistema" \
-    -theme-str 'window { width: 240px; border-radius: 12px; }' \
+OPTS=$(printf "⏻  Desligar\n↺  Reiniciar\n⎋  Encerrar sessão\n⏾  Suspender")
+CHOICE=$(echo -e "$OPTS" | rofi -dmenu \
+    -p "Sistema" \
+    -theme ~/.config/rofi/catppuccin-mocha.rasi \
+    -theme-str 'window { width: 260px; }' \
     -theme-str 'listview { lines: 4; }' \
-    -theme-str 'element { border-radius: 8px; }')
+    -no-custom)
 
 case "$CHOICE" in
     *"Desligar"*)        systemctl poweroff ;;
     *"Reiniciar"*)       systemctl reboot ;;
-    *"Encerrar sessão"*) openbox --exit ;;
+    *"Encerrar"*)        openbox --exit ;;
     *"Suspender"*)       systemctl suspend ;;
 esac
 PWEOF
