@@ -217,7 +217,8 @@ yay -S --noconfirm --needed \
     spotify \
     visual-studio-code-bin \
     catppuccin-gtk-theme-mocha \
-    tela-circle-icon-theme-dracula-git
+    tela-circle-icon-theme-dracula-git \
+    bamf
 
 log "Aplicativos AUR instalados"
 
@@ -245,18 +246,29 @@ cat > "$HOME/.config/rofi/config.rasi" << 'EOF'
 @import "themes/catppuccin-mocha.rasi"
 
 configuration {
-    modi:           "drun,run,window";
-    show-icons:     true;
-    icon-theme:     "Tela-circle-dracula";
-    drun-display-format: "{name}";
-    display-drun:   "Apps";
-    display-run:    "Run";
-    display-window: "Windows";
+    modi:                   "drun,run,window";
+    show-icons:             true;
+    icon-theme:             "Tela-circle-dracula";
+    drun-display-format:    "{name}";
+    display-drun:           "Apps";
+    display-run:            "Run";
+    display-window:         "Windows";
+
+    /* Garante foco de teclado ao abrir */
+    steal-focus:            true;
+    /* Navegação */
+    kb-accept-entry:        "Return,KP_Enter";
+    kb-row-down:            "Down,Control+n,Tab";
+    kb-row-up:              "Up,Control+p,ISO_Left_Tab";
+    kb-cancel:              "Escape,Control+g,Control+bracketleft";
+    kb-remove-char-back:    "BackSpace";
 }
 
 window {
-    width: 520px;
-    border-radius: 12px;
+    width:          520px;
+    border-radius:  12px;
+    /* Força janela no topo */
+    fullscreen:     false;
 }
 
 element {
@@ -463,19 +475,14 @@ section "Configurando Openbox"
 
 mkdir -p "$HOME/.config/openbox"
 
-# Copiar configs padrão se não existirem
-if [ ! -f "$HOME/.config/openbox/rc.xml" ]; then
-    cp /etc/xdg/openbox/rc.xml "$HOME/.config/openbox/rc.xml"
-fi
-if [ ! -f "$HOME/.config/openbox/menu.xml" ]; then
-    cp /etc/xdg/openbox/menu.xml "$HOME/.config/openbox/menu.xml"
-fi
+# Sempre partir do rc.xml padrão para garantir estado limpo
+cp /etc/xdg/openbox/rc.xml "$HOME/.config/openbox/rc.xml"
+cp /etc/xdg/openbox/menu.xml "$HOME/.config/openbox/menu.xml"
 
-# autostart — usar variável expandida para o path do polybar
-AUTOSTART_FILE="$HOME/.config/openbox/autostart"
+# autostart — sem aspas no heredoc para expandir variáveis
 POLYBAR_LAUNCH="$HOME/.config/polybar/launch.sh"
 
-cat > "$AUTOSTART_FILE" << AUTOEOF
+cat > "$HOME/.config/openbox/autostart" << AUTOEOF
 # PipeWire
 pipewire &
 pipewire-pulse &
@@ -484,14 +491,17 @@ wireplumber &
 # Polkit
 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 
-# Compositor (aguarda um momento para estabilizar)
+# Compositor
 sleep 0.5 && picom --daemon &
 
 # Barra
 sleep 0.8 && ${POLYBAR_LAUNCH} &
 
-# Dock (aguarda compositor)
-sleep 1.0 && plank &
+# Bamf (necessário para o Plank associar janelas)
+sleep 0.8 && /usr/lib/bamf/bamfdaemon &
+
+# Dock
+sleep 1.4 && plank &
 
 # Notificações
 dunst &
@@ -500,37 +510,56 @@ dunst &
 nitrogen --restore &
 AUTOEOF
 
-# Adicionar keybinds ao rc.xml via python (evita problemas de escaping)
-if ! grep -q "rofi" "$HOME/.config/openbox/rc.xml"; then
-    python3 - << 'PYEOF'
-import os
+# Inserir keybinds no rc.xml via python
+# Openbox: <action name="Execute"> requer <command>, não <execute>
+# Tecla Super = prefixo "W-" no Openbox
+python3 - << 'PYEOF'
+import os, re
 home = os.path.expanduser('~')
 path = home + '/.config/openbox/rc.xml'
 with open(path) as f:
     c = f.read()
+
+# Remover qualquer bloco de keybinds nosso anterior
+c = re.sub(r'\s*<!-- Keybinds customizados -->.*?(?=</keyboard>)', '', c, flags=re.DOTALL)
+
 kb = """
     <!-- Keybinds customizados -->
     <keybind key="W-space">
-      <action name="Execute"><execute>rofi -show drun</execute></action>
-    </keybind>
-    <keybind key="W-t">
-      <action name="Execute"><execute>kitty</execute></action>
-    </keybind>
-    <keybind key="W-e">
-      <action name="Execute"><execute>thunar</execute></action>
-    </keybind>
-    <keybind key="W-l">
-      <action name="Execute"><execute>rofi -show window</execute></action>
+      <action name="Execute">
+        <command>rofi -show drun -kb-accept-entry Return -kb-row-down Down -kb-row-up Up</command>
+      </action>
     </keybind>
     <keybind key="W-d">
-      <action name="Execute"><execute>rofi -show drun</execute></action>
+      <action name="Execute">
+        <command>rofi -show drun -kb-accept-entry Return -kb-row-down Down -kb-row-up Up</command>
+      </action>
     </keybind>
-</keyboard>"""
-c = c.replace('</keyboard>', kb, 1)
+    <keybind key="W-t">
+      <action name="Execute">
+        <command>kitty</command>
+      </action>
+    </keybind>
+    <keybind key="W-e">
+      <action name="Execute">
+        <command>thunar</command>
+      </action>
+    </keybind>
+    <keybind key="W-l">
+      <action name="Execute">
+        <command>rofi -show window</command>
+      </action>
+    </keybind>
+    <keybind key="W-F4">
+      <action name="Close"/>
+    </keybind>
+"""
+
+c = c.replace('</keyboard>', kb + '</keyboard>', 1)
 with open(path, 'w') as f:
     f.write(c)
+print("rc.xml keybinds configurados")
 PYEOF
-fi
 
 log "Openbox configurado"
 
@@ -780,13 +809,30 @@ ItemsAlignment=3
 EOF
 
 # Launchers do plank
+# O Plank lê .dockitem com o path completo do .desktop
+# Precisamos descobrir o nome real de cada .desktop antes de criar o item
 mkdir -p "$HOME/.config/plank/dock1/launchers"
 
-for app in thunar kitty google-chrome-stable discord telegram-desktop qbittorrent steam spotify code sublime_text; do
-    if [ -f "/usr/share/applications/${app}.desktop" ]; then
-        echo -e "[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/${app}.desktop" \
-            > "$HOME/.config/plank/dock1/launchers/${app}.dockitem"
+create_dockitem() {
+    local desktop_name="$1"
+    local desktop_path="/usr/share/applications/${desktop_name}.desktop"
+    local item_name="${desktop_name%%.*}"  # remove extensão se tiver
+
+    if [ -f "$desktop_path" ]; then
+        cat > "$HOME/.config/plank/dock1/launchers/${item_name}.dockitem" << DOCKEOF
+[PlankDockItemPreferences]
+Launcher=file://${desktop_path}
+DOCKEOF
+        echo "  dockitem criado: ${item_name}"
+    else
+        echo "  .desktop não encontrado: ${desktop_path}"
     fi
+}
+
+# Mapear nome do .desktop de cada app
+for desktop in     "thunar"     "kitty"     "google-chrome"     "discord"     "telegram-desktop"     "qbittorrent"     "steam"     "spotify"     "code"     "sublime_text"     "org.gnome.Nautilus"     "org.gnome.FileRoller"
+do
+    create_dockitem "$desktop"
 done
 
 log "Plank configurado"
