@@ -1172,59 +1172,50 @@ xdg-user-dirs-update
 log "Diretórios XDG criados"
 
 # ------------------------------------------------------------------------------
-# SDDM — display manager com tema Catppuccin
+# Login automático — autologin no tty1 + startx automático
+# (mais confiável que SDDM no Arch com Openbox)
 # ------------------------------------------------------------------------------
-section "Instalando SDDM (display manager)"
+section "Configurando login automático"
 
-sudo pacman -S --noconfirm --needed sddm qt5-quickcontrols2 qt5-graphicaleffects
-yay -S --noconfirm --needed sddm-catppuccin-git 2>/dev/null ||     yay -S --noconfirm --needed catppuccin-sddm-theme-mocha 2>/dev/null ||     warn "Tema SDDM Catppuccin não encontrado no AUR — SDDM será instalado com tema padrão"
+# 1. Autologin no tty1 via systemd
+CURRENT_USER=$(whoami)
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d/
 
-# Criar arquivo de sessão para o Openbox
-sudo mkdir -p /usr/share/xsessions
-sudo tee /usr/share/xsessions/openbox.desktop > /dev/null << 'SESSEOF'
-[Desktop Entry]
-Name=Openbox
-Comment=Log in using the Openbox window manager
-Exec=/usr/bin/openbox-session
-TryExec=/usr/bin/openbox-session
-Icon=openbox
-Type=Application
-SESSEOF
+sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf > /dev/null << AUTOEOF
+[Service]
+ExecStart=
+ExecStart=-/usr/bin/agetty --autologin ${CURRENT_USER} --noclear %I \$TERM
+Type=idle
+AUTOEOF
 
-# Detectar tema instalado
-SDDM_THEME=$(find /usr/share/sddm/themes -maxdepth 1 -type d -iname "*catppuccin*mocha*"     -o -type d -iname "*mocha*" 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+# 2. Adicionar startx automático ao .bash_profile
+# (só inicia no tty1 e só se não tiver display rodando)
+BASH_PROFILE="$HOME/.bash_profile"
 
-sudo mkdir -p /etc/sddm.conf.d
+if ! grep -q "exec startx" "$BASH_PROFILE" 2>/dev/null; then
+    cat >> "$BASH_PROFILE" << 'BASHEOF'
 
-if [ -n "$SDDM_THEME" ]; then
-    sudo tee /etc/sddm.conf.d/theme.conf > /dev/null << SDDMEOF
-[Theme]
-Current=${SDDM_THEME}
-SDDMEOF
-    log "SDDM tema: $SDDM_THEME"
-else
-    warn "Nenhum tema Catppuccin encontrado — usando tema padrão do SDDM"
+# Iniciar Openbox automaticamente ao logar no tty1
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx
+fi
+BASHEOF
 fi
 
-# Configurações gerais do SDDM
-sudo tee /etc/sddm.conf.d/general.conf > /dev/null << 'SDDMEOF'
-[General]
-DisplayServer=x11
-HaltCommand=/usr/bin/systemctl poweroff
-RebootCommand=/usr/bin/systemctl reboot
+# 3. Garantir que .bash_profile é lido pelo bash
+BASHRC="$HOME/.bashrc"
+if ! grep -q ".bash_profile" "$BASHRC" 2>/dev/null; then
+    cat >> "$BASHRC" << 'RCEOF'
 
-[Autologin]
-# Descomente e preencha para login automático:
-# User=seu_usuario
-# Session=openbox
+# Carregar .bash_profile se existir
+if [ -f "$HOME/.bash_profile" ]; then
+    source "$HOME/.bash_profile"
+fi
+RCEOF
+fi
 
-[Users]
-MaximumUid=60513
-MinimumUid=1000
-SDDMEOF
-
-sudo systemctl enable sddm
-log "SDDM instalado e habilitado"
+sudo systemctl daemon-reload
+log "Login automático configurado — ao reiniciar entrará direto no desktop"
 
 # ------------------------------------------------------------------------------
 # Habilitar serviços
@@ -1248,8 +1239,11 @@ cat << 'EOF'
   ║      Setup concluído com sucesso!            ║
   ╠══════════════════════════════════════════════╣
   ║                                              ║
-  ║  Para iniciar o ambiente:                    ║
-  ║    startx                                    ║
+  ║  Reinicie para entrar no desktop:            ║
+  ║    sudo reboot                               ║
+  ║                                              ║
+  ║  Login automático configurado —              ║
+  ║  ao ligar entra direto no Openbox.           ║
   ║                                              ║
   ║  Atalhos configurados:                       ║
   ║    Super + Space → Rofi (launcher)           ║
@@ -1257,13 +1251,11 @@ cat << 'EOF'
   ║    Super + T     → Kitty (terminal)          ║
   ║    Super + E     → Thunar (arquivos)         ║
   ║    Super + L     → Rofi (window switcher)    ║
+  ║    Super + 1-4   → Trocar workspace          ║
   ║                                              ║
   ║  Wallpaper: coloque wallpaper.jpg ou         ║
   ║  wallpaper.png na pasta do repositório       ║
   ║  antes de executar o script.                 ║
-  ║                                              ║
-  ║  Se algo não carregar, clique com botão      ║
-  ║  direito no desktop → Reconfigure           ║
   ║                                              ║
   ╚══════════════════════════════════════════════╝
 EOF
