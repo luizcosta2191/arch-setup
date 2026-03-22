@@ -550,20 +550,21 @@ chmod +x "$HOME/.config/polybar/scripts/powermenu.sh"
 # ── Script para renomear desktops ─────────────────────────────────────────────
 cat > "$HOME/.config/polybar/scripts/rename-desktops.sh" << 'RENEOF'
 #!/bin/bash
-# Força os nomes dos desktops via xprop, necessário pois o Openbox usa
-# o locale do sistema (PT-BR) para nomear por padrão
-python3 - << 'PYEOF'
-import subprocess
-names = ["●", "●", "●", "●"]
-# _NET_DESKTOP_NAMES é uma lista de strings null-terminated em UTF-8
-data = " ".join(names) + " "
-encoded = ",".join(str(b) for b in data.encode('utf-8'))
-subprocess.run([
-    "xprop", "-root",
-    "-f", "_NET_DESKTOP_NAMES", "8u",
-    "-set", "_NET_DESKTOP_NAMES", data
-], check=False)
-PYEOF
+# Renomeia todos os 4 desktops para bolinhas via xprop
+# _NET_DESKTOP_NAMES: strings separadas por byte nulo (\x00)
+python3 -c "
+import subprocess, sys
+bullet = chr(0x25cf)  # ●
+names = [bullet, bullet, bullet, bullet]
+data = chr(0).join(names) + chr(0)
+raw = data.encode('utf-8')
+result = subprocess.run(
+    ['xprop', '-root', '-f', '_NET_DESKTOP_NAMES', '8u',
+     '-set', '_NET_DESKTOP_NAMES', data],
+    capture_output=True
+)
+sys.exit(result.returncode)
+"
 RENEOF
 chmod +x "$HOME/.config/polybar/scripts/rename-desktops.sh"
 
