@@ -1,166 +1,452 @@
-#!/usr/bin/env bash
-# =============================================================================
-#  arch-setup — instalador interativo para Arch Linux
-#  https://github.com/seu-usuario/arch-setup
-# =============================================================================
-set -euo pipefail
+#!/bin/bash
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$SCRIPT_DIR/install.log"
-DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
+#############################################################################
+# Script para instalar Niri e Noctalia Shell no Arch Linux
+# 
+# Niri: Compositor Wayland moderno e flexível
+# Noctalia Shell: Shell configurável para Niri
+#
+# Uso: sudo bash install-niri-noctalia.sh
+#############################################################################
 
-# ── Cores ─────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+set -e  # Parar se algum comando falhar
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-log()     { echo -e "${GREEN}[✔]${RESET} $*" | tee -a "$LOG_FILE"; }
-warn()    { echo -e "${YELLOW}[!]${RESET} $*" | tee -a "$LOG_FILE"; }
-error()   { echo -e "${RED}[✘]${RESET} $*" | tee -a "$LOG_FILE"; }
-info()    { echo -e "${CYAN}[→]${RESET} $*" | tee -a "$LOG_FILE"; }
-section() { echo -e "\n${BOLD}${BLUE}══ $* ══${RESET}\n" | tee -a "$LOG_FILE"; }
+# Cores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # Sem cor
 
-ask() {
-    echo -en "${YELLOW}[?]${RESET} $* [s/N] "
-    read -r resp
-    [[ "$resp" =~ ^[Ss]$ ]]
+# Funções de logging
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
-die() { error "$*"; exit 1; }
-
-# ── Verificações iniciais ─────────────────────────────────────────────────────
-check_requirements() {
-    [[ $EUID -eq 0 ]] && die "Não execute como root. O script pedirá sudo quando necessário."
-    command -v pacman &>/dev/null || die "Este script requer Arch Linux com pacman."
-    ping -c1 archlinux.org &>/dev/null || die "Sem conexão com a internet."
-    log "Pré-requisitos OK"
+log_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
 }
 
-# ── Banner ─────────────────────────────────────────────────────────────────────
-banner() {
-clear
-cat << 'EOF'
-   _____  ____  ____  _   __   _____ ______ _______ __  ______
-  / _ \ \/ / / / / / / | / /  / ___// ____//_  __/ / / / / __ \
- / /_/ /\  / /_/ / /  |/ /   \__ \/ __/   / / / /_/ / /_/ / /_/ /
-/_/ /_/ /_/\____/_/|_|_/   /___/_____/  /_/ \____/ .__/ /____/
-                                                  /_/
-   Instalador para Arch Linux  ·  Hyprland + Waybar + Dock
+log_warning() {
+    echo -e "${YELLOW}[AVISO]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERRO]${NC} $1"
+}
+
+# Verificar se é root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log_error "Este script deve ser executado como root (use sudo)"
+        exit 1
+    fi
+}
+
+# Verificar se é Arch Linux
+check_arch() {
+    if ! grep -qi "arch" /etc/os-release; then
+        log_warning "Este script foi criado para Arch Linux"
+        log_info "Pressione Enter para continuar ou Ctrl+C para cancelar..."
+        read
+    fi
+}
+
+# Atualizar pacotes do sistema
+update_system() {
+    log_info "Atualizando banco de dados de pacotes..."
+    pacman -Sy --noconfirm
+    log_success "Sistema atualizado"
+}
+
+# Instalar dependências de compilação base
+install_build_deps() {
+    log_info "Instalando dependências de compilação..."
+    
+    local build_deps=(
+        "base-devel"
+        "git"
+        "cargo"
+        "rust"
+    )
+    
+    for pkg in "${build_deps[@]}"; do
+        if ! pacman -Q "$pkg" &> /dev/null; then
+            log_info "Instalando $pkg..."
+            pacman -S "$pkg" --noconfirm
+        else
+            log_success "$pkg já instalado"
+        fi
+    done
+}
+
+# Instalar dependências do Niri
+install_niri_deps() {
+    log_info "Instalando dependências do Niri..."
+    
+    local niri_deps=(
+        "wayland"
+        "libxkbcommon"
+        "xwayland"
+        "pipewire"
+        "wireplumber"
+        "seatd"
+        "mesa"
+        "libglvnd"
+        "fontconfig"
+        "freetype2"
+        "libxcb"
+        "xcb-proto"
+        "xcb-util"
+        "xcb-util-image"
+        "xcb-util-keysyms"
+        "xcb-util-renderutil"
+        "xcb-util-wm"
+        "libxrandr"
+        "libxinerama"
+        "libxcursor"
+        "libxi"
+        "libxext"
+        "libx11"
+        "pango"
+        "glib2"
+        "dbus"
+    )
+    
+    for pkg in "${niri_deps[@]}"; do
+        if ! pacman -Q "$pkg" &> /dev/null; then
+            log_info "Instalando $pkg..."
+            pacman -S "$pkg" --noconfirm
+        else
+            log_success "$pkg já instalado"
+        fi
+    done
+}
+
+# Instalar dependências de runtime
+install_runtime_deps() {
+    log_info "Instalando dependências de runtime..."
+    
+    local runtime_deps=(
+        "alsa-lib"
+        "libpulse"
+        "jack"
+        "openssl"
+        "curl"
+    )
+    
+    for pkg in "${runtime_deps[@]}"; do
+        if ! pacman -Q "$pkg" &> /dev/null; then
+            log_info "Instalando $pkg..."
+            pacman -S "$pkg" --noconfirm
+        else
+            log_success "$pkg já instalado"
+        fi
+    done
+}
+
+# Instalar AUR Helper (yay ou paru)
+install_aur_helper() {
+    log_info "Verificando AUR helper..."
+    
+    # Verificar se já existe yay ou paru
+    if command -v yay &> /dev/null; then
+        log_success "yay já instalado"
+        return 0
+    elif command -v paru &> /dev/null; then
+        log_success "paru já instalado"
+        return 0
+    fi
+    
+    log_info "Nenhum AUR helper encontrado. Instalando yay..."
+    
+    # Criar usuário para compilação se não existir
+    local build_user="aur_builder"
+    if ! id "$build_user" &>/dev/null; then
+        log_info "Criando usuário de compilação: $build_user"
+        useradd -m -G wheel "$build_user" 2>/dev/null || true
+    fi
+    
+    # Permitir sudo sem senha para o usuário de compilação
+    if ! grep -q "^$build_user ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/* 2>/dev/null; then
+        echo "$build_user ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/"$build_user" > /dev/null
+        chmod 440 /etc/sudoers.d/"$build_user"
+        log_info "Permissões sudo configuradas para $build_user"
+    fi
+    
+    # Preparar diretório de compilação
+    local build_dir="/tmp/yay-build-$$"
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+    
+    log_info "Clonando yay-bin do AUR..."
+    if ! sudo -u "$build_user" git clone https://aur.archlinux.org/yay-bin.git 2>/dev/null; then
+        log_warning "yay-bin não disponível, tentando yay..."
+        if ! sudo -u "$build_user" git clone https://aur.archlinux.org/yay.git 2>/dev/null; then
+            log_error "Falha ao clonar yay do AUR"
+            return 1
+        fi
+        build_dir="$build_dir/yay"
+    else
+        build_dir="$build_dir/yay-bin"
+    fi
+    
+    log_info "Compilando yay... isso pode levar alguns minutos"
+    cd "$build_dir"
+    
+    # Configurar git para o usuário de compilação (necessário em algumas máquinas)
+    sudo -u "$build_user" git config --global user.email "builder@localhost" 2>/dev/null || true
+    sudo -u "$build_user" git config --global user.name "AUR Builder" 2>/dev/null || true
+    
+    # Compilar e instalar
+    if sudo -u "$build_user" makepkg -si --noconfirm 2>&1 | tee /tmp/yay-build.log; then
+        log_success "yay instalado com sucesso"
+        
+        # Limpar arquivos de compilação
+        cd /tmp
+        rm -rf "$build_dir"
+        
+        return 0
+    else
+        log_error "Falha na compilação do yay"
+        log_info "Log: cat /tmp/yay-build.log"
+        return 1
+    fi
+}
+
+# Instalar Niri do AUR
+install_niri() {
+    log_info "Instalando Niri..."
+    
+    if command -v niri &> /dev/null; then
+        log_success "Niri já está instalado"
+        return 0
+    fi
+    
+    # Garantir que temos um AUR helper
+    if ! command -v yay &> /dev/null && ! command -v paru &> /dev/null; then
+        log_warning "Nenhum AUR helper disponível"
+        if ! install_aur_helper; then
+            log_error "Não foi possível instalar AUR helper"
+            return 1
+        fi
+    fi
+    
+    # Usar yay ou paru
+    local aur_cmd="yay"
+    if ! command -v yay &> /dev/null && command -v paru &> /dev/null; then
+        aur_cmd="paru"
+    fi
+    
+    log_info "Usando $aur_cmd para instalar Niri..."
+    if $aur_cmd -S niri --noconfirm; then
+        log_success "Niri instalado com sucesso"
+        return 0
+    else
+        log_error "Falha na instalação do Niri com $aur_cmd"
+        return 1
+    fi
+}
+
+# Instalar Noctalia Shell
+install_noctalia() {
+    log_info "Instalando Noctalia Shell..."
+    
+    if command -v noctalia &> /dev/null; then
+        log_success "Noctalia Shell já está instalado"
+        return 0
+    fi
+    
+    # Garantir que temos um AUR helper
+    if ! command -v yay &> /dev/null && ! command -v paru &> /dev/null; then
+        log_warning "Nenhum AUR helper disponível"
+        if ! install_aur_helper; then
+            log_error "Não foi possível instalar AUR helper"
+            return 1
+        fi
+    fi
+    
+    # Usar yay ou paru
+    local aur_cmd="yay"
+    if ! command -v yay &> /dev/null && command -v paru &> /dev/null; then
+        aur_cmd="paru"
+    fi
+    
+    log_info "Tentando instalar noctalia-shell com $aur_cmd..."
+    
+    # Noctalia Shell pode não estar disponível em todos os momentos
+    if $aur_cmd -S noctalia-shell --noconfirm 2>&1; then
+        log_success "Noctalia Shell instalado com sucesso"
+        return 0
+    else
+        log_warning "Noctalia Shell pode não estar disponível no AUR no momento"
+        log_info "Você pode instalar manualmente depois com: $aur_cmd -S noctalia-shell"
+        return 0
+    fi
+}
+
+# Configurar ambiente Wayland
+configure_wayland() {
+    log_info "Configurando variáveis de ambiente Wayland..."
+    
+    local wayland_env="/etc/environment.d/wayland.conf"
+    
+    if [ ! -f "$wayland_env" ]; then
+        mkdir -p /etc/environment.d
+        cat > "$wayland_env" << 'EOF'
+# Variáveis de ambiente para Wayland
+QT_QPA_PLATFORM=wayland
+GDK_BACKEND=wayland
+CLUTTER_BACKEND=wayland
 EOF
-echo ""
+        log_success "Variáveis de ambiente Wayland configuradas"
+    else
+        log_warning "Arquivo de configuração Wayland já existe"
+    fi
 }
 
-# ── Seleção de módulos ────────────────────────────────────────────────────────
-select_modules() {
-    section "O que deseja instalar?"
-
-    INSTALL_BASE=true       # sempre instalado
-    INSTALL_HYPRLAND=false
-    INSTALL_APPS=false
-    INSTALL_FONTS=false
-    INSTALL_THEME=false
-    INSTALL_DOTFILES=false
-    INSTALL_GAMING=false
-    INSTALL_SHELL=false
-
-    echo -e "  ${BOLD}Módulos disponíveis:${RESET}"
-    echo ""
-
-    ask "  [1] Hyprland + Waybar + nwg-dock (WM completo)" \
-        && INSTALL_HYPRLAND=true
-    ask "  [2] Aplicativos essenciais (Firefox, Thunar, VLC, etc.)" \
-        && INSTALL_APPS=true
-    ask "  [3] Fontes (Nerd Fonts, emoji, Microsoft)" \
-        && INSTALL_FONTS=true
-    ask "  [4] Tema GTK + ícones (Catppuccin Mocha)" \
-        && INSTALL_THEME=true
-    ask "  [5] Dotfiles (configs prontas para uso)" \
-        && INSTALL_DOTFILES=true
-    ask "  [6] Fish shell + Starship prompt" \
-        && INSTALL_SHELL=true
-    ask "  [7] Gaming (Steam, Proton, MangoHud, GameMode)" \
-        && INSTALL_GAMING=true
-
-    echo ""
-    echo -e "  ${BOLD}Resumo do que será instalado:${RESET}"
-    $INSTALL_BASE     && echo -e "  ${GREEN}✔${RESET} Base do sistema (yay, pipewire, bluetooth, etc.)"
-    $INSTALL_HYPRLAND && echo -e "  ${GREEN}✔${RESET} Hyprland + Waybar + nwg-dock"
-    $INSTALL_APPS     && echo -e "  ${GREEN}✔${RESET} Aplicativos essenciais"
-    $INSTALL_FONTS    && echo -e "  ${GREEN}✔${RESET} Fontes"
-    $INSTALL_THEME    && echo -e "  ${GREEN}✔${RESET} Tema Catppuccin"
-    $INSTALL_DOTFILES && echo -e "  ${GREEN}✔${RESET} Dotfiles"
-    $INSTALL_SHELL    && echo -e "  ${GREEN}✔${RESET} Fish + Starship"
-    $INSTALL_GAMING   && echo -e "  ${GREEN}✔${RESET} Gaming"
-    echo ""
-
-    ask "Confirmar e iniciar instalação?" || { info "Cancelado."; exit 0; }
+# Adicionar sessão Niri ao SDDM/LightDM
+setup_session() {
+    log_info "Configurando sessão de desktop Niri..."
+    
+    local niri_desktop="/usr/share/wayland-sessions/niri.desktop"
+    
+    if [ ! -f "$niri_desktop" ]; then
+        mkdir -p /usr/share/wayland-sessions
+        cat > "$niri_desktop" << 'EOF'
+[Desktop Entry]
+Name=Niri
+Comment=Niri compositor
+Exec=niri
+Type=Application
+EOF
+        log_success "Sessão Niri adicionada"
+    else
+        log_success "Sessão Niri já configurada"
+    fi
 }
 
-# ── Execução dos módulos ──────────────────────────────────────────────────────
-run_modules() {
-    source "$SCRIPT_DIR/modules/base.sh"
-    install_base
+# Instalar display manager opcional
+install_display_manager() {
+    log_info "Verificando display manager..."
+    
+    if ! pacman -Q sddm &> /dev/null && ! pacman -Q lightdm &> /dev/null; then
+        log_warning "Nenhum display manager encontrado"
+        read -p "Deseja instalar SDDM? (s/n) " -n 1 -r
+        echo
+        
+        if [[ $REPLY =~ ^[Ss]$ ]]; then
+            pacman -S sddm --noconfirm
+            systemctl enable sddm
+            log_success "SDDM instalado e habilitado"
+        fi
+    else
+        log_success "Display manager já instalado"
+    fi
+}
 
-    $INSTALL_HYPRLAND && {
-        source "$SCRIPT_DIR/modules/hyprland.sh"
-        install_hyprland
+# Criar arquivo de configuração base do Niri
+setup_niri_config() {
+    log_info "Criando arquivo de configuração do Niri..."
+    
+    local niri_config="$HOME/.config/niri/config.kdl"
+    local niri_dir="$HOME/.config/niri"
+    
+    if [ ! -d "$niri_dir" ]; then
+        mkdir -p "$niri_dir"
+        
+        cat > "$niri_config" << 'EOF'
+// Configuração básica do Niri
+// Para mais opções, consulte: https://github.com/YaLTeR/niri
+
+input {
+    keyboard {
+        xkb {
+            layout "br"  // Layout de teclado brasileiro
+        }
     }
-
-    $INSTALL_APPS && {
-        source "$SCRIPT_DIR/modules/apps.sh"
-        install_apps
-    }
-
-    $INSTALL_FONTS && {
-        source "$SCRIPT_DIR/modules/fonts.sh"
-        install_fonts
-    }
-
-    $INSTALL_THEME && {
-        source "$SCRIPT_DIR/modules/theme.sh"
-        install_theme
-    }
-
-    $INSTALL_SHELL && {
-        source "$SCRIPT_DIR/modules/shell.sh"
-        install_shell
-    }
-
-    $INSTALL_GAMING && {
-        source "$SCRIPT_DIR/modules/gaming.sh"
-        install_gaming
-    }
-
-    $INSTALL_DOTFILES && {
-        source "$SCRIPT_DIR/modules/dotfiles.sh"
-        install_dotfiles
+    
+    touchpad {
+        tap
+        natural-scroll
     }
 }
 
-# ── Finalização ───────────────────────────────────────────────────────────────
-finish() {
-    section "Instalação concluída!"
-    log "Log salvo em: $LOG_FILE"
+output "eDP-1" {
+    scale 1.0
+}
+
+// Espaços de trabalho
+workspace "1" {
+    // Configurações da área de trabalho
+}
+
+// Atalhos de teclado
+binds {
+    Mod+T { spawn "alacritty"; }
+    Mod+D { spawn "rofi" "-show" "drun"; }
+    Mod+Q { close-window; }
+    Mod+Escape { power-off-monitors; }
+}
+
+// Tema e aparência
+preferred-scale 1.0
+EOF
+        
+        log_success "Arquivo de configuração do Niri criado em $niri_config"
+    else
+        log_warning "Diretório de configuração do Niri já existe"
+    fi
+}
+
+# Resumo final
+print_summary() {
     echo ""
-    echo -e "  ${BOLD}Próximos passos:${RESET}"
-    echo -e "  1. Reinicie o sistema: ${CYAN}reboot${RESET}"
-    echo -e "  2. Faça login — o Hyprland inicia automaticamente via SDDM"
-    echo -e "  3. Atalhos básicos:"
-    echo -e "     ${CYAN}SUPER + Q${RESET}       → terminal (kitty)"
-    echo -e "     ${CYAN}SUPER + E${RESET}       → explorador de arquivos"
-    echo -e "     ${CYAN}SUPER + R${RESET}       → launcher (rofi)"
-    echo -e "     ${CYAN}SUPER + Shift + Q${RESET} → fechar janela"
-    echo -e "     ${CYAN}SUPER + 1..9${RESET}    → workspaces"
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}           Instalação concluída com sucesso!                   ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Próximos passos:"
+    echo "  1. Faça logout da sessão atual"
+    echo "  2. Na tela de login, selecione 'Niri' como sessão"
+    echo "  3. Faça login normalmente"
+    echo ""
+    echo "Configurações:"
+    echo "  • Configuração do Niri: ~/.config/niri/config.kdl"
+    echo "  • Variáveis Wayland: /etc/environment.d/wayland.conf"
+    echo ""
+    echo "Links úteis:"
+    echo "  • Niri: https://github.com/YaLTeR/niri"
+    echo "  • Documentação: https://github.com/YaLTeR/niri/wiki"
     echo ""
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Função principal
 main() {
-    banner
-    check_requirements
-    select_modules
-    run_modules
-    finish
+    echo -e "${BLUE}"
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║        Instalador de Niri + Noctalia Shell para Arch Linux     ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+    
+    check_root
+    check_arch
+    
+    update_system
+    install_build_deps
+    install_aur_helper          # ← NOVO: Instalar AUR helper primeiro
+    install_niri_deps
+    install_runtime_deps
+    install_niri
+    install_noctalia
+    configure_wayland
+    setup_session
+    install_display_manager
+    setup_niri_config
+    
+    print_summary
 }
 
-main "$@"
+# Executar função principal
+main
